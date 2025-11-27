@@ -1,106 +1,114 @@
-const SpinUser = require("../models/spinUser.model");
-const Spin = require("../models/spin.model");
-const WalletLedger = require("../models/wallet.model");
-const { generateReward } = require("../utils/spin_rewards");
+// modules/spinwheel-service/services/spin.service.js
 
-async function processSpin(uid, email) {
-  let user = await SpinUser.findOne({ uid });
+const fs = require("fs");
+const path = require("path");
 
-  if (!user) {
-    user = await SpinUser.create({
-      uid,
-      email,
-      spin_balance: 0,
-      coins: 0,
-      free_spin_used_today: false,
-      last_spin_date: null
-    });
+const SpinUser = require("../models/SpinUser");
+const SpinHistory = require("../models/SpinHistory");
+const Spin = require("../models/Spin");
+
+class SpinService {
+  constructor() {
+    const filePath = path.join(__dirname, "../config/rewards.config.json");
+    const raw = fs.readFileSync(filePath);
+    this.config = JSON.parse(raw);
+
+    this.sectors = this.config.sectors;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // --------------------------------------------------------
+  // GET STATUS
+  // --------------------------------------------------------
+  async getStatus(uid) {
+    let user = await SpinUser.findOne({ uid });
 
-  // Reset free spin daily
-  if (user.last_spin_date !== today) {
-    user.free_spin_used_today = false;
-    user.last_spin_date = today;
-  }
+    if (!user) {
+      user = await SpinUser.create({ uid });
+    }
 
-  // Determine spin source
-  let source;
-  if (!user.free_spin_used_today) {
-    user.free_spin_used_today = true;
-    source = "free";
-  }
-  else if (user.spin_balance > 0) {
-    user.spin_balance -= 1;
-    source = "bonus";
-  }
-  else {
-    return { error: "NO_SPINS_LEFT" };
-  }
+    const today = new Date().toDateString();
+    const lastSpin =
+      user.last_spin_date ? new Date(user.last_spin_date).toDateString() : null;
 
-  // Generate reward
-  const reward = generateReward();
+    const freeSpinAvailable = lastSpin !== today;
 
-  if (reward.type === "coins") {
-    user.coins += reward.value;
-
-    await WalletLedger.create({
-      userUid: uid,
-      userEmail: email,
-      type: "spin_reward",
-      amount: reward.value,
-      description: `Won ${reward.value} coins from spin`
-    });
-  }
-
-  user.rewards.push({
-    type: reward.type,
-    value: reward.value,
-    code: reward.code,
-    createdAt: new Date()
-  });
-
-  await user.save();
-
-  await Spin.create({
-    userUid: uid,
-    userEmail: email,
-    reward,
-    source
-  });
-
-  return {
-    type: reward.type,
-    value: reward.value,
-    code: reward.code,
-    free_spin_used_today: user.free_spin_used_today,
-    bonus_spins_left: user.spin_balance
-  };
-}
-
-async function getStatus(uid) {
-  const user = await SpinUser.findOne({ uid });
-
-  if (!user) {
     return {
-      freeSpinAvailable: true,
-      bonusSpins: 0,
-      walletCoins: 0
+      success: true,
+      free_spin_available: freeSpinAvailable,
+      bonus_spins: user.spin_balance,
+      wallet_coins: user.coins,
+      rewards: this.sectors,
     };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const freeSpinAvailable = (user.last_spin_date !== today) || (!user.free_spin_used_today);
+  // --------------------------------------------------------
+  // ADD BONUS SPIN
+  // --------------------------------------------------------
+  async giveBonus(uid) {
+    const user = await SpinUser.findOne({ uid });
 
-  return {
-    freeSpinAvailable,
-    bonusSpins: user.spin_balance,
-    walletCoins: user.coins
-  };
+    user.spin_balance += 1;
+    await user.save();
+
+    return {
+      success: true,
+      bonus_spins_left: user.spin_balance,
+    };
+  }
+
+  // --------------------------------------------------------
+  // SPIN NOW
+  // --------------------------------------------------------
+  async spinNow(uid, email) {
+    let user = await SpinUser.findOne({ uid });
+
+    if (!user) {
+      user = await SpinUser.create({ uid, email });
+    }
+
+    const today = new Date().toDateString();
+    const lastSpin =
+      user.last_spin_date ? new Date(user.last_spin_date).toDateString() : null;
+
+    const freeSpinAvailable = lastSpin !== today;
+
+    if (!freeSpinAvailable && user.spin_balance <= 0) {
+      return { success: false, message: "No spins left" };
+    }
+
+    if (!freeSpinAvailable) {
+      user.spin_balance -= 1;
+    }
+
+    user.last_spin_date = today;
+
+    // Pick a random reward
+    const index = Math.floor(Math.random() * this.sectors.length);
+    const rewardObj = this.sectors[index];
+
+    // If coins, update wallet
+    if (rewardObj.type === "coins") {
+      user.coins += rewardObj.value;
+    }
+
+    await user.save();
+
+    // Log spin
+    await Spin.create({
+      uid,
+      email,
+      reward: rewardObj,
+      source: freeSpinAvailable ? "daily" : "bonus",
+    });
+
+    return {
+      success: true,
+      reward: rewardObj,
+      sector: index,
+      bonus_spins_left: user.spin_balance,
+      free_spin_used_today: freeSpinAvailable,
+    };
+  }
 }
 
-module.exports = {
-  processSpin,
-  getStatus
-};
+module.exports = new SpinService();
