@@ -1,4 +1,4 @@
-// modules/spinwheel-service/models/SpinUser.model.js
+// modules/spinwheel-service/models/SpinUser.js
 
 const mongoose = require("mongoose");
 
@@ -7,14 +7,11 @@ const SpinUserSchema = new mongoose.Schema(
     uid: { type: String, required: true, unique: true },
     email: { type: String },
 
-    // Free spin: only once per day
     last_spin_date: { type: String, default: null },
     free_spin_used_today: { type: Boolean, default: false },
 
-    // Bonus spins earned from watching ads
     spin_balance: { type: Number, default: 0 },
 
-    // Wallet coins
     coins: { type: Number, default: 0 },
 
     rewards: [
@@ -30,6 +27,5 @@ const SpinUserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("SpinUser.model", SpinUserSchema);
-
-
+// 👇 Correct model name
+module.exports = mongoose.model("SpinUser", SpinUserSchema);
