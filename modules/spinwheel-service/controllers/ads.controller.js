@@ -1,4 +1,4 @@
-const SpinUser = require("../models/spinUser.model");
+const SpinUser = require("../models/SpinUser");
 
 exports.watchAd = async (req, res) => {
   try {
@@ -45,4 +45,5 @@ exports.watchAd = async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
+
 };
