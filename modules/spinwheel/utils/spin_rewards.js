@@ -1,23 +1,35 @@
-module.exports = {
-  generateReward() {
-    const rewards = [
-      { type: "coins", value: 10, chance: 30 },
-      { type: "coins", value: 20, chance: 25 },
-      { type: "coins", value: 50, chance: 15 },
-      { type: "coins", value: 100, chance: 10 },
-      { type: "coupon", code: "AVD10", chance: 10 },
-      { type: "coins", value: 500, chance: 5 },
-      { type: "none", value: 0, chance: 5 }
-    ];
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const firebase = require("./config/firebase");
 
-    const rand = Math.random() * 100;
-    let acc = 0;
+// DB Connections
+const connectSpinDB = require("./config/mongo.spin");
+const connectSarathiDB = require("./config/mongo.sarathi");
 
-    for (const r of rewards) {
-      acc += r.chance;
-      if (rand <= acc) return r;
-    }
+connectSpinDB();
+connectSarathiDB();
 
-    return rewards[0];
-  }
-};
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// MODULE ROUTES
+const spinRoutes = require("./modules/spinwheel-service/routes/spin.routes");
+
+// base API
+app.use("/api/spin", spinRoutes);
+
+// Health
+app.get("/", (req, res) => res.send("Aviders Backend Running"));
+
+// Error Handler
+const errorHandler = require("./middleware/errorHandler");
+app.use(errorHandler);
+
+// Port
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Backend running on PORT ${PORT}`);
+});
