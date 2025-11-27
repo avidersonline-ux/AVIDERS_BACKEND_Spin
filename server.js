@@ -1,6 +1,6 @@
 // modules/spinwheel-service/services/spin.service.js
 
-const SpinUser = require("../models/spinUser.model");
+const SpinUser = require("../models/spinUser");
 const SpinHistory = require("../models/SpinHistory");
 const Spin = require("../models/spin.model");
 
