@@ -30,5 +30,6 @@ const SpinUserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("SpinUser", SpinUserSchema);
+module.exports = mongoose.model("SpinUser.model", SpinUserSchema);
+
 
