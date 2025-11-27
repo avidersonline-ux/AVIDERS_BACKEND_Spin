@@ -2,7 +2,7 @@ const router = require("express").Router();
 const controller = require("../controllers/spin.controller");
 
 // GET spin status
-router.get("/status", controller.spinStatus);
+router.get("/status", controller.getStatus);
 
 // Perform a spin
 router.post("/spin", controller.spinNow);
@@ -10,8 +10,10 @@ router.post("/spin", controller.spinNow);
 // Bonus spin from ads
 router.post("/bonus", controller.addBonusSpin);
 
-// REMOVE these unless you implement them
-// router.get("/history", controller.getHistory);
-// router.get("/rewards", controller.getRewards);
+// History
+router.get("/history", controller.getHistory);
+
+// Rewards
+router.get("/rewards", controller.getRewards);
 
 module.exports = router;
