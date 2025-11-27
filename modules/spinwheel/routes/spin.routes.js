@@ -1,14 +1,19 @@
 const router = require("express").Router();
 const controller = require("../controllers/spin.controller");
-const adsController = require("../controllers/ads.controller");
 
-// Get current spin status (free spin, bonus spins, coins, etc.)
-router.get("/status", controller.spinStatus);
+// GET spin status
+router.get("/status", controller.getStatus);
 
-// Spin the wheel
+// Perform a spin
 router.post("/spin", controller.spinNow);
 
-// Watch an ad → earn 1 extra spin (max 10/day)
-router.post("/watch-ad", adsController.watchAd);
+// Bonus spin from ads
+router.post("/bonus", controller.addBonusSpin);
+
+// (Optional) History
+router.get("/history", controller.getHistory);
+
+// (Optional) Rewards list
+router.get("/rewards", controller.getRewards);
 
 module.exports = router;
