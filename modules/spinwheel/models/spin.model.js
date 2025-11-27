@@ -1,27 +1,27 @@
+// modules/spinwheel-service/models/Spin.js
+
 const mongoose = require("mongoose");
 
 const SpinSchema = new mongoose.Schema({
-  userUid: { type: String, required: true },       // Firebase UID
-  userEmail: { type: String, required: true },     // For admin visibility
+  uid: { type: String, required: true },      // Firebase UID
+  email: { type: String },                    // optional
 
   reward: {
     type: {
-      type: String,     // "coins", "coupon", "none"
-      required: true
+      type: String,         // "coins", "coupon", "none"
+      required: true,
     },
     value: Number,
-    code: String
+    code: String,
   },
 
   source: {
     type: String,
     enum: ["daily", "bonus", "affiliate"],
-    default: "daily"
+    default: "daily",
   },
 
-  affiliateOrderId: String,
-
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
 });
 
 module.exports = mongoose.model("Spin", SpinSchema);
