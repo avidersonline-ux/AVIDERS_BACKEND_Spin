@@ -1,0 +1,50 @@
+{
+  "sectors": [
+    {
+      "type": "coins",
+      "value": 10,
+      "label": "10 Coins",
+      "chance": 30
+    },
+    {
+      "type": "coins",
+      "value": 20,
+      "label": "20 Coins",
+      "chance": 25
+    },
+    {
+      "type": "none",
+      "label": "Try Again",
+      "chance": 10
+    },
+    {
+      "type": "coupon",
+      "label": "Coupon Reward",
+      "code": "AVD10",
+      "chance": 10
+    },
+    {
+      "type": "coins",
+      "value": 50,
+      "label": "50 Coins",
+      "chance": 10
+    },
+    {
+      "type": "coins",
+      "value": 100,
+      "label": "100 Coins",
+      "chance": 7
+    },
+    {
+      "type": "coins",
+      "value": 500,
+      "label": "500 Coins",
+      "chance": 3
+    },
+    {
+      "type": "none",
+      "label": "Better Luck",
+      "chance": 5
+    }
+  ]
+}
