@@ -2,7 +2,7 @@
 
 const SpinUser = require("../models/SpinUser");
 const SpinHistory = require("../models/SpinHistory");
-const Spin = require("../models/spin.model");
+const Spin = require("../models/Spin.model");
 
 
 const { pickReward, loadConfig } = require("../utils/rewardEngine");
@@ -64,6 +64,7 @@ class SpinService {
 }
 
 module.exports = new SpinService();
+
 
 
 
