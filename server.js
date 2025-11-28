@@ -1,14 +1,15 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
-require("./config/mongo")();
+const connectMongo = require("./config/mongo");
+
+connectMongo();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use("/api", require("./routes/index"));
+app.use("/api/spin", require("./routes/spinRoutes"));
 
-app.listen(process.env.PORT || 5000, () =>
-  console.log("Spin backend running on port", process.env.PORT)
-);
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Spin API running on port ${PORT}`));
