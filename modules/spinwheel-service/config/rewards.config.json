@@ -1,9 +1,9 @@
 {
-  "rewards": [
+  "sectors": [
     { "type": "coins", "value": 10, "label": "10 Coins", "probability": 30 },
     { "type": "coins", "value": 20, "label": "20 Coins", "probability": 25 },
-    { "type": "none", "label": "Try Again", "probability": 10 },
-    { "type": "coupon", "label": "AVD10", "probability": 10 },
+    { "type": "none",  "label": "Try Again", "probability": 10 },
+    { "type": "coupon", "label": "Coupon Reward", "code": "AVD10", "probability": 10 },
     { "type": "coins", "value": 50, "label": "50 Coins", "probability": 10 },
     { "type": "coins", "value": 100, "label": "100 Coins", "probability": 7 },
     { "type": "coins", "value": 500, "label": "500 Coins", "probability": 3 },
