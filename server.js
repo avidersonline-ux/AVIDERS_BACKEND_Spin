@@ -1,4 +1,5 @@
-equire("dotenv").config();
+// server.js
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 
@@ -9,7 +10,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use("/api/spin", require("./modules/spinwheel-service/routes/spin.routes"));
+// Real spin wheel routes
+const spinRoutes = require("./modules/spinwheel-service/routes/spin.routes");
+app.use("/api/spin", spinRoutes);
 
 app.get("/", (req, res) => res.send("Aviders Spin Backend Running"));
 
