@@ -1,12 +1,12 @@
 {
   "rewards": [
-    { "type": "coins", "value": 10, "label": "10 Coins", "probability": 30, "sector": 0 },
-    { "type": "coins", "value": 20, "label": "20 Coins", "probability": 25, "sector": 1 },
-    { "type": "none", "label": "Try Again", "probability": 10, "sector": 2 },
-    { "type": "coupon", "label": "Coupon Reward", "code": "AVD10", "probability": 10, "sector": 3 },
-    { "type": "coins", "value": 50, "label": "50 Coins", "probability": 10, "sector": 4 },
-    { "type": "coins", "value": 100, "label": "100 Coins", "probability": 7, "sector": 5 },
-    { "type": "coins", "value": 500, "label": "500 Coins", "probability": 3, "sector": 6 },
-    { "type": "none", "label": "Better Luck", "probability": 5, "sector": 7 }
+    { "type": "coins", "value": 10, "label": "10 Coins", "probability": 30 },
+    { "type": "coins", "value": 20, "label": "20 Coins", "probability": 25 },
+    { "type": "none", "label": "Try Again", "probability": 10 },
+    { "type": "coupon", "label": "AVD10", "probability": 10 },
+    { "type": "coins", "value": 50, "label": "50 Coins", "probability": 10 },
+    { "type": "coins", "value": 100, "label": "100 Coins", "probability": 7 },
+    { "type": "coins", "value": 500, "label": "500 Coins", "probability": 3 },
+    { "type": "none", "label": "Better Luck", "probability": 5 }
   ]
 }
