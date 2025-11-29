@@ -1,15 +1,32 @@
 const mongoose = require("mongoose");
 
-const SpinHistorySchema = new mongoose.Schema(
-  {
-    uid: { type: String, required: true },
-    email: { type: String },
-
-    reward: String,
-    reward_value: Number,
-    created_at: { type: Date, default: Date.now }
+const spinHistorySchema = new mongoose.Schema({
+  uid: {
+    type: String,
+    required: true
   },
-  { timestamps: true }
-);
+  reward_type: {
+    type: String,
+    required: true
+  },
+  reward_value: {
+    type: Number,
+    default: 0
+  },
+  reward_code: {
+    type: String,
+    default: null
+  },
+  reward_label: {
+    type: String,
+    required: true
+  },
+  timestamp: {
+    type: Date,
+    default: Date.now
+  }
+}, {
+  timestamps: true
+});
 
-module.exports = mongoose.model("SpinHistory", SpinHistorySchema);
+module.exports = mongoose.models.SpinHistory || mongoose.model("SpinHistory", spinHistorySchema);
