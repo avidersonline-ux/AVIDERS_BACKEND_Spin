@@ -1,17 +1,16 @@
-// config/mongo.js
+const mongoose = require('mongoose');
 
-const mongoose = require("mongoose");
-
-module.exports = async () => {
+const connectMongo = async () => {
   try {
-    if (!process.env.MONGO_URI) {
-      throw new Error("MONGO_URI is missing in environment variables");
-    }
-
-    await mongoose.connect(process.env.MONGO_URI, {});
-    console.log("✅ Main MongoDB Connected");
-  } catch (err) {
-    console.error("❌ Main MongoDB Error:", err.message);
+    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/main', {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log(`✅ Main MongoDB Connected: ${conn.connection.host}`);
+  } catch (error) {
+    console.error('❌ Main MongoDB connection error:', error.message);
     process.exit(1);
   }
 };
+
+module.exports = connectMongo;
