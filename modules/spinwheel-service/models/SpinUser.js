@@ -1,14 +1,25 @@
 const mongoose = require("mongoose");
 
-const SpinUser = new mongoose.Schema(
-  {
-    userId: { type: String, required: true, unique: true },
-
-    lastSpinDate: Date,
-    bonusSpins: { type: Number, default: 0 },
-    walletCoins: { type: Number, default: 0 }
+const spinUserSchema = new mongoose.Schema({
+  uid: {
+    type: String,
+    required: true,
+    unique: true
   },
-  { timestamps: true }
-);
+  free_spin_available: {
+    type: Boolean,
+    default: true
+  },
+  bonus_spins: {
+    type: Number,
+    default: 0
+  },
+  last_free_spin: {
+    type: Date,
+    default: null
+  }
+}, {
+  timestamps: true
+});
 
-module.exports = mongoose.model("SpinUser", SpinUser);
+module.exports = mongoose.model("SpinUser", spinUserSchema);
