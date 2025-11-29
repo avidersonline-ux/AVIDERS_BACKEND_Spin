@@ -18,40 +18,46 @@ app.use((req, res, next) => {
 app.get("/health", (req, res) => {
   res.json({ 
     success: true, 
-    message: "Server is running in emergency mode", 
-    timestamp: new Date().toISOString(),
-    database: "fallback"
+    message: "Server is running", 
+    timestamp: new Date().toISOString()
   });
 });
 
-// Test endpoint with full mock data
-app.get("/api/test", (req, res) => {
-  res.json({
-    success: true,
-    message: "API is working in emergency mode!",
-    rewards: [
-      { type: "coins", value: 10, label: "10 Coins", probability: 0.3 },
-      { type: "coins", value: 20, label: "20 Coins", probability: 0.2 },
-      { type: "coins", value: 5, label: "5 Coins", probability: 0.4 },
-      { type: "none", value: 0, label: "Try Again", probability: 0.05 },
-      { type: "coins", value: 15, label: "15 Coins", probability: 0.25 },
-      { type: "coupon", code: "TEST10", label: "Discount Coupon", probability: 0.1 },
-      { type: "coins", value: 25, label: "25 Coins", probability: 0.15 },
-      { type: "none", value: 0, label: "Better Luck", probability: 0.05 }
-    ]
-  });
-});
+// In-memory storage for demo (replace with database later)
+const userSpins = new Map();
 
-// EMERGENCY SPIN API ENDPOINTS (No database required)
+// Function to ensure user has data
+const ensureUserData = (uid) => {
+  if (!userSpins.has(uid)) {
+    userSpins.set(uid, {
+      free_spins: 1, // Always 1 free spin available
+      bonus_spins: 0,
+      wallet_coins: 100,
+      last_spin: null
+    });
+  }
+  return userSpins.get(uid);
+};
+
+// SPIN API ENDPOINTS
 app.post("/api/spin/status", (req, res) => {
   const { uid } = req.body;
   console.log(`🔎 STATUS requested for UID: ${uid}`);
   
+  if (!uid) {
+    return res.json({
+      success: false,
+      message: "UID is required"
+    });
+  }
+
+  const userData = ensureUserData(uid);
+  
   res.json({
     success: true,
-    free_spin_available: true,
-    bonus_spins: 1,
-    wallet_coins: 100,
+    free_spin_available: userData.free_spins > 0,
+    bonus_spins: userData.bonus_spins,
+    wallet_coins: userData.wallet_coins,
     rewards: [
       { type: "coins", value: 10, label: "10 Coins" },
       { type: "coins", value: 20, label: "20 Coins" },
@@ -62,7 +68,7 @@ app.post("/api/spin/status", (req, res) => {
       { type: "coins", value: 25, label: "25 Coins" },
       { type: "none", value: 0, label: "Better Luck" }
     ],
-    message: "Emergency mode - using mock data"
+    message: "Status loaded successfully"
   });
 });
 
@@ -70,10 +76,22 @@ app.post("/api/spin/bonus", (req, res) => {
   const { uid } = req.body;
   console.log(`➕ BONUS requested for UID: ${uid}`);
   
+  if (!uid) {
+    return res.json({
+      success: false,
+      message: "UID is required"
+    });
+  }
+
+  const userData = ensureUserData(uid);
+  userData.bonus_spins += 1;
+  
+  console.log(`✅ Bonus spin added. Total bonus spins: ${userData.bonus_spins}`);
+  
   res.json({
     success: true,
-    bonus_spins_left: 2,
-    message: "Bonus spin added! (Emergency mode)"
+    bonus_spins: userData.bonus_spins,
+    message: "Bonus spin added successfully!"
   });
 });
 
@@ -81,6 +99,36 @@ app.post("/api/spin/spin", (req, res) => {
   const { uid } = req.body;
   console.log(`🎰 SPIN requested for UID: ${uid}`);
   
+  if (!uid) {
+    return res.json({
+      success: false,
+      message: "UID is required"
+    });
+  }
+
+  const userData = ensureUserData(uid);
+  
+  // Check if user has spins
+  const totalSpins = userData.free_spins + userData.bonus_spins;
+  if (totalSpins <= 0) {
+    return res.json({
+      success: false,
+      message: "No spins available"
+    });
+  }
+
+  // Use free spin first, then bonus spins
+  let free_spin_used = false;
+  if (userData.free_spins > 0) {
+    userData.free_spins -= 1;
+    free_spin_used = true;
+    console.log(`🔄 Used free spin. Remaining: ${userData.free_spins}`);
+  } else {
+    userData.bonus_spins -= 1;
+    console.log(`🔄 Used bonus spin. Remaining: ${userData.bonus_spins}`);
+  }
+
+  // Generate reward
   const rewards = [
     { type: "coins", value: 10, label: "10 Coins", sector: 0 },
     { type: "coins", value: 20, label: "20 Coins", sector: 1 },
@@ -95,42 +143,40 @@ app.post("/api/spin/spin", (req, res) => {
   const randomIndex = Math.floor(Math.random() * rewards.length);
   const reward = rewards[randomIndex];
   
+  // Update wallet if coins reward
+  if (reward.type === "coins") {
+    userData.wallet_coins += reward.value;
+    console.log(`💰 Added ${reward.value} coins. Total: ${userData.wallet_coins}`);
+  }
+  
+  userData.last_spin = new Date();
+  
   res.json({
     success: true,
     sector: reward.sector,
     reward: reward,
-    free_spin_used_today: false,
-    bonus_spins_left: 1,
-    wallet_coins: 100 + (reward.value || 0),
-    message: `You won: ${reward.label} (Emergency mode)`
+    free_spin_used_today: free_spin_used,
+    bonus_spins: userData.bonus_spins,
+    wallet_coins: userData.wallet_coins,
+    message: `You won: ${reward.label}`
   });
 });
 
-// Try to load databases but don't crash if they fail
-console.log('🔄 Attempting to load databases...');
-try {
-  const connectMongo = require("./config/mongo");
-  connectMongo();
-  console.log('✅ MongoDB module loaded');
-} catch (error) {
-  console.log('⚠️  MongoDB module failed to load:', error.message);
-}
-
-// If original routes exist, try to load them (but we already have emergency routes above)
-try {
-  const spinRoutes = require("./modules/spinwheel-service/routes/spin.routes");
-  app.use("/api/spin", spinRoutes);
-  console.log("✅ Original spin routes loaded");
-} catch (error) {
-  console.log("⚠️  Original spin routes not available, using emergency routes");
-}
+// Reset free spins endpoint (for testing)
+app.post("/api/spin/reset", (req, res) => {
+  const { uid } = req.body;
+  if (uid && userSpins.has(uid)) {
+    userSpins.get(uid).free_spins = 1;
+    userSpins.get(uid).bonus_spins = 0;
+  }
+  res.json({ success: true, message: "Spins reset" });
+});
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`🚀 SERVER RUNNING on port ${PORT}`);
   console.log(`✅ Health check: https://your-app.onrender.com/health`);
-  console.log(`✅ Test endpoint: https://your-app.onrender.com/api/test`);
-  console.log(`✅ Spin endpoints ready in EMERGENCY MODE`);
-  console.log(`📝 Make sure MONGODB_URI is set in Render environment variables`);
+  console.log(`✅ Spin endpoints ready!`);
+  console.log(`🎯 Every user gets 1 free spin + bonus spins from ads`);
 });
