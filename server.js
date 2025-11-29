@@ -13,14 +13,14 @@ app.use(cors({
 
 app.use(express.json());
 
-// MongoDB Connection - Use ONLY environment variable
-const MONGODB_URI = process.env.MONGODB_URI;
+// MongoDB Connection - Use MONGO_URI_SPIN environment variable
+const MONGODB_URI = process.env.MONGO_URI_SPIN || process.env.MONGO_URI;
 
 if (!MONGODB_URI) {
-  console.error("❌ MONGODB_URI environment variable is not set");
+  console.error("❌ MONGO_URI_SPIN environment variable is not set");
   console.log("🔄 Using in-memory storage only - data will not persist");
 } else {
-  console.log("🔗 Attempting MongoDB connection...");
+  console.log("🔗 Attempting MongoDB connection with MONGO_URI_SPIN...");
   mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log("✅ MongoDB Connected - Data will be saved permanently");
@@ -335,4 +335,5 @@ app.listen(PORT, () => {
   console.log(`💾 MongoDB: ${dbStatus}`);
   console.log(`🏷️ Cluster: AVIDERS-SPIN-WIN`);
   console.log(`🗃️ Database: spinwheelDb`);
+  console.log(`🔑 Using: ${process.env.MONGO_URI_SPIN ? 'MONGO_URI_SPIN' : process.env.MONGO_URI ? 'MONGO_URI' : 'No connection string'}`);
 });
