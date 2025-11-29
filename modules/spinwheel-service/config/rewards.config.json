@@ -3,49 +3,49 @@
     {
       "type": "coins",
       "value": 10,
-      "probability": 0.3,
-      "label": "10 Coins"
+      "probability": 0.2,
+      "label": "10 AVD Coins"
     },
     {
       "type": "coins", 
       "value": 20,
-      "probability": 0.2,
-      "label": "20 Coins"
+      "probability": 0.13,
+      "label": "20 AVD Coins"
     },
     {
       "type": "coins",
       "value": 5,
-      "probability": 0.4,
-      "label": "5 Coins"
+      "probability": 0.27,
+      "label": "5 AVD Coins"
     },
     {
       "type": "none",
       "value": 0,
-      "probability": 0.05,
+      "probability": 0.03,
       "label": "Try Again"
     },
     {
       "type": "coins",
       "value": 15,
-      "probability": 0.25,
-      "label": "15 Coins"
+      "probability": 0.17,
+      "label": "15 AVD Coins"
     },
     {
       "type": "coupon",
       "code": "SPIN10",
-      "probability": 0.1,
+      "probability": 0.07,
       "label": "Discount Coupon"
     },
     {
       "type": "coins",
       "value": 25,
-      "probability": 0.15,
-      "label": "25 Coins"
+      "probability": 0.1,
+      "label": "25 AVD Coins"
     },
     {
       "type": "none",
       "value": 0,
-      "probability": 0.05,
+      "probability": 0.03,
       "label": "Better Luck"
     }
   ]
