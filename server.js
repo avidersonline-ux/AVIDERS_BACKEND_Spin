@@ -13,14 +13,14 @@ app.use(cors({
 
 app.use(express.json());
 
-// MongoDB Connection - Use MongoDB Atlas (free cloud database)
+// MongoDB Connection - Updated for current MongoDB driver
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://your-username:your-password@cluster0.xxxxx.mongodb.net/aviders_spin?retryWrites=true&w=majority";
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+mongoose.connect(MONGODB_URI)
+.then(() => {
+  console.log("✅ MongoDB Connected - Data will be saved permanently");
+  console.log(`📊 Database: ${mongoose.connection.db.databaseName}`);
 })
-.then(() => console.log("✅ MongoDB Connected - Data will be saved permanently"))
 .catch(err => {
   console.error("❌ MongoDB connection failed:", err.message);
   console.log("🔄 Using in-memory storage as fallback");
@@ -322,5 +322,8 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Premium Spin Wheel Server running on port ${PORT}`);
   console.log(`✅ CORS enabled for all origins`);
-  console.log(`💾 MongoDB: ${mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"}`);
+  
+  // Better connection status check
+  const dbStatus = mongoose.connection.readyState === 1 ? "Connected" : "Disconnected";
+  console.log(`💾 MongoDB: ${dbStatus}`);
 });
