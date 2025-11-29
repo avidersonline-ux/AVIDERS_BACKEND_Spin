@@ -1,5 +1,4 @@
 const express = require("express");
-const mongoose = require("mongoose");
 const cors = require("cors");
 
 const app = express();
@@ -13,41 +12,9 @@ app.use(cors({
 
 app.use(express.json());
 
-// MongoDB Connection
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/aviders_spin";
-
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log("✅ MongoDB Connected - Data will be saved permanently"))
-.catch(err => {
-  console.error("❌ MongoDB connection failed:", err.message);
-  console.log("🔄 Using in-memory storage as fallback");
-});
-
-// MongoDB Schemas
-const userSchema = new mongoose.Schema({
-  uid: { type: String, required: true, unique: true },
-  freeSpins: { type: Number, default: 1 },
-  bonusSpins: { type: Number, default: 0 },
-  walletCoins: { type: Number, default: 100 },
-  lastSpin: { type: Date, default: null },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const spinHistorySchema = new mongoose.Schema({
-  uid: { type: String, required: true },
-  reward_type: { type: String, required: true },
-  reward_value: { type: Number, default: 0 },
-  reward_code: { type: String, default: null },
-  reward_label: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now }
-});
-
-// MongoDB Models
-const User = mongoose.model('User', userSchema);
-const SpinHistory = mongoose.model('SpinHistory', spinHistorySchema);
+// Simple in-memory storage (works without MongoDB)
+const users = new Map();
+const spinHistory = [];
 
 // Request logging
 app.use((req, res, next) => {
@@ -61,44 +28,37 @@ app.get("/health", (req, res) => {
     success: true, 
     message: "Server is running", 
     timestamp: new Date().toISOString(),
-    database: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
+    storage: "In-memory (No MongoDB needed)"
   });
 });
 
-// Ensure user exists in MongoDB
-const ensureUser = async (uid) => {
-  try {
-    let user = await User.findOne({ uid });
-    
-    if (!user) {
-      user = new User({
-        uid,
-        freeSpins: 1,
-        bonusSpins: 0,
-        walletCoins: 100
-      });
-      await user.save();
-      console.log(`👤 New user CREATED in MongoDB: ${uid}`);
-    }
-    
-    return user;
-  } catch (error) {
-    console.error("❌ Error ensuring user:", error);
-    throw error;
+// Ensure user exists
+const ensureUser = (uid) => {
+  if (!users.has(uid)) {
+    users.set(uid, {
+      uid: uid,
+      freeSpins: 1,
+      bonusSpins: 0,
+      walletCoins: 100,
+      lastSpin: null,
+      createdAt: new Date()
+    });
+    console.log(`👤 New user created: ${uid}`);
   }
+  return users.get(uid);
 };
 
-// SPIN API ENDPOINTS - NOW SAVING TO MONGODB
-app.post("/api/spin/status", async (req, res) => {
+// SPIN API ENDPOINTS
+app.post("/api/spin/status", (req, res) => {
   try {
     const { uid } = req.body;
     console.log(`🔎 STATUS requested for UID: ${uid}`);
     
     if (!uid) {
-      return res.json({ success: false, message: "UID is required" });
+      return res.status(400).json({ success: false, message: "UID is required" });
     }
 
-    const user = await ensureUser(uid);
+    const user = ensureUser(uid);
     
     res.json({
       success: true,
@@ -118,24 +78,23 @@ app.post("/api/spin/status", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Status error:', error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
 
-app.post("/api/spin/bonus", async (req, res) => {
+app.post("/api/spin/bonus", (req, res) => {
   try {
     const { uid } = req.body;
     console.log(`➕ BONUS requested for UID: ${uid}`);
     
     if (!uid) {
-      return res.json({ success: false, message: "UID is required" });
+      return res.status(400).json({ success: false, message: "UID is required" });
     }
 
-    const user = await ensureUser(uid);
+    const user = ensureUser(uid);
     user.bonusSpins += 1;
-    await user.save();
 
-    console.log(`✅ Bonus spin ADDED to MongoDB for ${uid}. Total: ${user.bonusSpins}`);
+    console.log(`✅ Bonus spin added for ${uid}. Total: ${user.bonusSpins}`);
     
     res.json({
       success: true,
@@ -144,20 +103,20 @@ app.post("/api/spin/bonus", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Bonus spin error:', error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
 
-app.post("/api/spin/spin", async (req, res) => {
+app.post("/api/spin/spin", (req, res) => {
   try {
     const { uid } = req.body;
     console.log(`🎰 SPIN requested for UID: ${uid}`);
     
     if (!uid) {
-      return res.json({ success: false, message: "UID is required" });
+      return res.status(400).json({ success: false, message: "UID is required" });
     }
 
-    const user = await ensureUser(uid);
+    const user = ensureUser(uid);
     
     // Check if user has spins
     if (user.freeSpins <= 0 && user.bonusSpins <= 0) {
@@ -196,20 +155,18 @@ app.post("/api/spin/spin", async (req, res) => {
       user.walletCoins += reward.value;
     }
 
-    // ✅ SAVE USER DATA TO MONGODB
-    await user.save();
-
-    // ✅ SAVE SPIN HISTORY TO MONGODB
-    const spinHistory = new SpinHistory({
+    // Save spin history
+    const historyEntry = {
       uid: uid,
       reward_type: reward.type,
       reward_value: reward.value,
       reward_code: reward.code,
-      reward_label: reward.label
-    });
-    await spinHistory.save();
+      reward_label: reward.label,
+      timestamp: new Date()
+    };
+    spinHistory.push(historyEntry);
 
-    console.log(`✅ Spin COMPLETED and SAVED to MongoDB for ${uid}. Reward: ${reward.label}, AVIDERS: ${user.walletCoins}`);
+    console.log(`✅ Spin completed for ${uid}. Reward: ${reward.label}, AVIDERS: ${user.walletCoins}`);
     
     res.json({
       success: true,
@@ -222,25 +179,24 @@ app.post("/api/spin/spin", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Spin error:', error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
 
-// NEW: Get user ledger/wallet history
-app.post("/api/spin/ledger", async (req, res) => {
+// LEDGER endpoint - Get user history
+app.post("/api/spin/ledger", (req, res) => {
   try {
     const { uid } = req.body;
     
     if (!uid) {
-      return res.json({ success: false, message: "UID is required" });
+      return res.status(400).json({ success: false, message: "UID is required" });
     }
 
-    const user = await User.findOne({ uid });
-    const spinHistory = await SpinHistory.find({ uid }).sort({ timestamp: -1 }).limit(50);
-
-    if (!user) {
-      return res.json({ success: false, message: "User not found" });
-    }
+    const user = ensureUser(uid);
+    const userHistory = spinHistory
+      .filter(record => record.uid === uid)
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 50);
 
     res.json({
       success: true,
@@ -251,12 +207,50 @@ app.post("/api/spin/ledger", async (req, res) => {
         walletCoins: user.walletCoins,
         createdAt: user.createdAt
       },
-      spinHistory: spinHistory,
-      totalSpins: spinHistory.length
+      spinHistory: userHistory,
+      totalSpins: userHistory.length
     });
   } catch (error) {
     console.error('❌ Ledger error:', error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
+  }
+});
+
+// RESET endpoint (for testing)
+app.post("/api/spin/reset", (req, res) => {
+  try {
+    const { uid } = req.body;
+    
+    if (!uid) {
+      return res.status(400).json({ success: false, message: "UID is required" });
+    }
+
+    if (users.has(uid)) {
+      users.delete(uid);
+    }
+    
+    // Remove user history
+    const userHistoryIndexes = [];
+    spinHistory.forEach((record, index) => {
+      if (record.uid === uid) {
+        userHistoryIndexes.push(index);
+      }
+    });
+    
+    // Remove in reverse order to avoid index issues
+    userHistoryIndexes.reverse().forEach(index => {
+      spinHistory.splice(index, 1);
+    });
+
+    console.log(`🔄 User reset: ${uid}`);
+    
+    res.json({
+      success: true,
+      message: "User data reset successfully"
+    });
+  } catch (error) {
+    console.error('❌ Reset error:', error);
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
 
@@ -265,5 +259,6 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Premium Spin Wheel Server running on port ${PORT}`);
   console.log(`✅ CORS enabled for all origins`);
-  console.log(`💾 MongoDB persistence: ${MONGODB_URI}`);
+  console.log(`💾 Using in-memory storage (No MongoDB required)`);
+  console.log(`🌍 Server is ready at: https://aviders-backend-spin-1.onrender.com`);
 });
