@@ -28,7 +28,7 @@ app.get("/health", (req, res) => {
     success: true, 
     message: "Server is running", 
     timestamp: new Date().toISOString(),
-    storage: "In-memory (No MongoDB needed)"
+    storage: "In-memory (No MongoDB required)"
   });
 });
 
