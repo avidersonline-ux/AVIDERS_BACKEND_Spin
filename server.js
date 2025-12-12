@@ -472,6 +472,80 @@ app.get("/api/spin/admin/users", async (req, res) => {
   }
 });
 
+/**
+ * POST ADMIN MIGRATE - Fix old database entries (one-time migration)
+ */
+app.post("/api/spin/admin/migrate", async (req, res) => {
+  try {
+    const adminKey = req.headers['x-admin-key'];
+    if (!adminKey || adminKey !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+    
+    console.log("🔧 Starting database migration...");
+    
+    // Get all users
+    const users = await User.find();
+    const userMap = {};
+    users.forEach(u => {
+      userMap[u.uid] = u.email || '';
+    });
+    
+    // Fix spin history entries
+    const historyEntries = await SpinHistory.find({});
+    let updatedCount = 0;
+    
+    for (const entry of historyEntries) {
+      let needsUpdate = false;
+      const updates = {};
+      
+      // Add email if missing
+      if (!entry.email && userMap[entry.uid]) {
+        updates.email = userMap[entry.uid];
+        needsUpdate = true;
+      }
+      
+      // Fix spinSource if missing or wrong
+      if (!entry.spinSource || entry.spinSource === 'daily_free') {
+        // Determine correct source based on context
+        // If user has bonusSpins, it's likely ad_rewarded
+        const user = users.find(u => u.uid === entry.uid);
+        if (user && user.bonusSpins > 0) {
+          updates.spinSource = 'ad_rewarded';
+        } else {
+          // Check if it's a 'Try Again' (none reward)
+          if (entry.rewardType === 'none') {
+            updates.spinSource = 'ad_rewarded'; // Assume lost ad spins
+          } else {
+            updates.spinSource = 'daily_free';
+          }
+        }
+        needsUpdate = true;
+      }
+      
+      if (needsUpdate) {
+        await SpinHistory.updateOne({ _id: entry._id }, { $set: updates });
+        updatedCount++;
+      }
+    }
+    
+    console.log(`✅ Migration complete: ${updatedCount} entries updated`);
+    
+    res.json({
+      success: true,
+      message: "Migration completed successfully",
+      stats: {
+        total_entries: historyEntries.length,
+        updated_entries: updatedCount,
+        total_users: users.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Migration error:', error);
+    res.status(500).json({ success: false, message: "Migration error: " + error.message });
+  }
+});
 // =====================
 // ERROR HANDLERS
 // =====================
