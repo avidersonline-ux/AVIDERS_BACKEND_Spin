@@ -3,20 +3,20 @@
     {
       "type": "coins",
       "value": 5,
-      "probability": 0.25,
+      "probability": 0.22,
       "label": "5 AVD Coins"
     },
     {
       "type": "coins",
       "value": 10,
-      "probability": 0.20,
+      "probability": 0.18,
       "label": "10 AVD Coins"
     },
     {
-      "type": "coins",
-      "value": 15,
-      "probability": 0.18,
-      "label": "15 AVD Coins"
+      "type": "bonus_spin",
+      "value": 2,
+      "probability": 0.08,
+      "label": "2 Free Spins 🎉"
     },
     {
       "type": "coins",
@@ -43,10 +43,22 @@
       "label": "50 AVD Coins"
     },
     {
+      "type": "coins",
+      "value": 100,
+      "probability": 0.02,
+      "label": "100 AVD Coins 💰"
+    },
+    {
+      "type": "bonus_spin",
+      "value": 1,
+      "probability": 0.13,
+      "label": "1 Free Spin 🎁"
+    },
+    {
       "type": "none",
       "value": 0,
       "probability": 0.02,
-      "label": "Better Luck Next Time"
+      "label": "Better Luck"
     }
   ]
 }

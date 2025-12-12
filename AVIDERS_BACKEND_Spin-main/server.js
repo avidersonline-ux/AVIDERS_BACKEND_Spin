@@ -289,6 +289,13 @@ app.post("/api/spin/spin", async (req, res) => {
       user.walletCoins += coinsEarned;
     }
     
+    // Add bonus spins if reward type is 'bonus_spin'
+    let bonusSpinsEarned = 0;
+    if (reward.type === 'bonus_spin' && reward.value > 0) {
+      bonusSpinsEarned = reward.value;
+      user.bonusSpins += bonusSpinsEarned;
+    }
+    
     // Save user
     user.updatedAt = new Date();
     await user.save();
@@ -310,6 +317,9 @@ app.post("/api/spin/spin", async (req, res) => {
     await spinHistory.save();
     
     console.log(`🎰 Spin completed: ${uid} → Sector ${reward.sector} → ${reward.label} (${spinSource})`);
+    if (bonusSpinsEarned > 0) {
+      console.log(`🎁 Bonus spins earned: ${bonusSpinsEarned} → New balance: ${user.bonusSpins}`);
+    }
     
     // Return complete result to client
     res.json({
@@ -328,6 +338,7 @@ app.post("/api/spin/spin", async (req, res) => {
         bonusSpins: user.bonusSpins
       },
       coinsEarned,
+      bonusSpinsEarned,
       message: `You won: ${reward.label}`
     });
     
