@@ -1,0 +1,52 @@
+{
+  "rewards": [
+    {
+      "type": "coins",
+      "value": 5,
+      "probability": 0.25,
+      "label": "5 AVD Coins"
+    },
+    {
+      "type": "coins",
+      "value": 10,
+      "probability": 0.20,
+      "label": "10 AVD Coins"
+    },
+    {
+      "type": "coins",
+      "value": 15,
+      "probability": 0.18,
+      "label": "15 AVD Coins"
+    },
+    {
+      "type": "coins",
+      "value": 20,
+      "probability": 0.12,
+      "label": "20 AVD Coins"
+    },
+    {
+      "type": "none",
+      "value": 0,
+      "probability": 0.08,
+      "label": "Try Again"
+    },
+    {
+      "type": "coins",
+      "value": 25,
+      "probability": 0.10,
+      "label": "25 AVD Coins"
+    },
+    {
+      "type": "coins",
+      "value": 50,
+      "probability": 0.05,
+      "label": "50 AVD Coins"
+    },
+    {
+      "type": "none",
+      "value": 0,
+      "probability": 0.02,
+      "label": "Better Luck Next Time"
+    }
+  ]
+}

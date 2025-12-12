@@ -1,0 +1,24 @@
+const admin = require("firebase-admin");
+const serviceAccount = require("../credentials/firebase-service-account.json");
+
+if (!admin.apps.length) {
+admin.initializeApp({
+credential: admin.credential.cert(serviceAccount),
+});
+}
+
+module.exports = async (req, res, next) => {
+const token = req.headers.authorization?.split("Bearer ")[1];
+if (!token) return res.status(401).json({ message: "Missing token" });
+
+try {
+const decoded = await admin.auth().verifyIdToken(token);
+req.user = {
+uid: decoded.uid,
+email: decoded.email,
+};
+next();
+} catch (err) {
+res.status(401).json({ message: "Unauthorized", error: err.message });
+}
+};

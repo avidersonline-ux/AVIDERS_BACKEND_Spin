@@ -1,0 +1,15 @@
+name: Deploy to Render (Safe)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger secure Render deploy hook
+        run: |
+          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
