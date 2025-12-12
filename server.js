@@ -76,9 +76,12 @@ const userSchema = new mongoose.Schema({
   email: { type: String, default: "" },
   walletCoins: { type: Number, default: 100 },
   freeSpinAvailable: { type: Boolean, default: true },
+  freeSpinsCount: { type: Number, default: 1 }, // Number of free spins (admin can change)
   lastFreeSpinGiven: { type: Date, default: null },
+  lastFreeSpinReset: { type: Date, default: null },
   lastFreeSpinUsed: { type: Date, default: null },
   bonusSpins: { type: Number, default: 0 },
+  fcmToken: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
@@ -112,6 +115,7 @@ const SpinHistory = mongoose.model('SpinHistory', spinHistorySchema);
  * Ensure user exists and update free spin availability
  */
 async function ensureUser(uid, email = "") {
+  const now = new Date();
   let user = await User.findOne({ uid });
   
   if (!user) {
@@ -120,11 +124,13 @@ async function ensureUser(uid, email = "") {
       email,
       walletCoins: 100,
       freeSpinAvailable: true,
-      lastFreeSpinGiven: new Date(),
+      freeSpinsCount: 1, // Default 1 free spin per day
+      lastFreeSpinGiven: now,
+      lastFreeSpinReset: now,
       bonusSpins: 0
     });
     await user.save();
-    console.log(`👤 Created user: ${uid}`);
+    console.log(`👤 Created user: ${uid} with 1 free spin`);
     return user;
   }
   
@@ -133,13 +139,23 @@ async function ensureUser(uid, email = "") {
     user.email = email;
   }
   
-  // Check if 24 hours passed since last free spin given
-  const now = new Date();
-  if (!user.lastFreeSpinGiven || 
-      (now - user.lastFreeSpinGiven) >= 24 * 60 * 60 * 1000) {
+  // Initialize freeSpinsCount if missing (for old users)
+  if (user.freeSpinsCount === undefined || user.freeSpinsCount === null) {
+    user.freeSpinsCount = 1;
+  }
+  
+  // Check if 24 hours passed since last reset - Reset daily
+  const hoursSinceReset = user.lastFreeSpinReset 
+    ? (now - user.lastFreeSpinReset) / (1000 * 60 * 60)
+    : 25; // If never reset, treat as expired
+  
+  if (hoursSinceReset >= 24) {
+    // Reset free spins to the configured amount (default 1)
+    const resetAmount = user.freeSpinsCount || 1;
     user.freeSpinAvailable = true;
     user.lastFreeSpinGiven = now;
-    console.log(`🎁 Free spin renewed for ${uid}`);
+    user.lastFreeSpinReset = now;
+    console.log(`🎁 Daily free spin reset for ${uid}: ${resetAmount} spin(s)`);
   }
   
   user.updatedAt = now;
@@ -225,8 +241,10 @@ app.post("/api/spin/status", async (req, res) => {
         email: user.email,
         walletCoins: user.walletCoins,
         freeSpinAvailable: user.freeSpinAvailable,
+        freeSpinsCount: user.freeSpinsCount || 1,
         bonusSpins: user.bonusSpins,
         lastFreeSpinGiven: user.lastFreeSpinGiven,
+        lastFreeSpinReset: user.lastFreeSpinReset,
         createdAt: user.createdAt
       },
       rewards: clientRewards,
@@ -469,6 +487,83 @@ app.get("/api/spin/admin/users", async (req, res) => {
   } catch (error) {
     console.error('❌ Admin error:', error);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/**
+ * POST ADMIN SET FREE SPINS - Manually set free spins for a user or all users
+ */
+app.post("/api/spin/admin/set-free-spins", async (req, res) => {
+  try {
+    const adminKey = req.headers['x-admin-key'];
+    if (!adminKey || adminKey !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+    
+    const { uid, freeSpinsCount } = req.body;
+    
+    if (!freeSpinsCount || freeSpinsCount < 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "freeSpinsCount must be a positive number" 
+      });
+    }
+    
+    const now = new Date();
+    
+    if (uid) {
+      // Set for specific user
+      const user = await User.findOne({ uid });
+      if (!user) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+      
+      user.freeSpinsCount = freeSpinsCount;
+      user.freeSpinAvailable = true;
+      user.lastFreeSpinGiven = now;
+      user.lastFreeSpinReset = now;
+      await user.save();
+      
+      console.log(`✅ Set ${freeSpinsCount} free spin(s) for user ${uid}`);
+      
+      return res.json({
+        success: true,
+        message: `Set ${freeSpinsCount} free spin(s) for user`,
+        user: {
+          uid: user.uid,
+          email: user.email,
+          freeSpinsCount: user.freeSpinsCount,
+          freeSpinAvailable: user.freeSpinAvailable
+        }
+      });
+    } else {
+      // Set for ALL users
+      const result = await User.updateMany(
+        {},
+        {
+          $set: {
+            freeSpinsCount,
+            freeSpinAvailable: true,
+            lastFreeSpinGiven: now,
+            lastFreeSpinReset: now
+          }
+        }
+      );
+      
+      console.log(`✅ Set ${freeSpinsCount} free spin(s) for ${result.modifiedCount} users`);
+      
+      return res.json({
+        success: true,
+        message: `Set ${freeSpinsCount} free spin(s) for all users`,
+        stats: {
+          updated_users: result.modifiedCount
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Set free spins error:', error);
+    res.status(500).json({ success: false, message: "Error: " + error.message });
   }
 });
 
