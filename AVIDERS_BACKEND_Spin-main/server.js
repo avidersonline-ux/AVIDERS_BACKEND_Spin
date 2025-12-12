@@ -79,8 +79,10 @@ app.use("/api/", apiLimiter);
 
 const validateSpinRequest = (req, res, next) => {
   const schema = Joi.object({
-    uid: Joi.string().min(5).max(100).required()
-  });
+    uid: Joi.string().min(5).max(100).required(),
+    email: Joi.string().email().optional().allow(''),
+    token: Joi.string().optional().allow('')
+  }).unknown(true);
 
   const { error } = schema.validate(req.body);
   if (error) {
@@ -300,6 +302,40 @@ app.post("/api/spin/bonus", validateSpinRequest, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Bonus spin error:', error);
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
+  }
+});
+
+app.post("/api/spin/register-token", validateSpinRequest, async (req, res) => {
+  try {
+    const { uid, token } = req.body;
+    console.log(`📱 FCM TOKEN registration for UID: ${uid}`);
+    
+    if (!uid) {
+      return res.status(400).json({ success: false, message: "UID is required" });
+    }
+    
+    if (!token) {
+      return res.status(400).json({ success: false, message: "Token is required" });
+    }
+
+    // Ensure user exists
+    await ensureUser(uid);
+    
+    // Save token using $addToSet to avoid duplicates
+    await User.updateOne(
+      { uid },
+      { $addToSet: { fcm_tokens: token } }
+    );
+
+    console.log(`✅ FCM token registered for ${uid}`);
+    
+    res.json({
+      success: true,
+      message: "Token registered"
+    });
+  } catch (error) {
+    console.error('❌ Register token error:', error);
     res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
