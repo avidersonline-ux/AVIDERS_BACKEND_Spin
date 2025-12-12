@@ -10,27 +10,54 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const Joi = require('joi');
 
-// Firebase Admin SDK for FCM
+// =====================
+// FIREBASE ADMIN SDK
+// =====================
+
 let admin;
+let firebaseInitialized = false;
+
 try {
   admin = require('firebase-admin');
   
   // Try to initialize Firebase Admin if not already initialized
   if (!admin.apps.length) {
-    const serviceAccountPath = path.join(__dirname, 'middleware', 'serviceAccount.json');
-    if (fs.existsSync(serviceAccountPath)) {
-      const serviceAccount = require(serviceAccountPath);
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-      console.log("✅ Firebase Admin SDK initialized successfully");
-    } else {
-      console.log("⚠️  Firebase Admin: serviceAccount.json not found, FCM notifications disabled");
-      admin = null;
+    // Priority 1: Use environment variable (Render deployment)
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+      try {
+        const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount)
+        });
+        firebaseInitialized = true;
+        console.log("✅ Firebase Admin SDK initialized from environment variable");
+      } catch (parseError) {
+        console.error("❌ Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON:", parseError.message);
+      }
     }
+    // Priority 2: Fall back to file (local development)
+    else {
+      const serviceAccountPath = path.join(__dirname, 'middleware', 'serviceAccount.json');
+      if (fs.existsSync(serviceAccountPath)) {
+        const serviceAccount = require(serviceAccountPath);
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount)
+        });
+        firebaseInitialized = true;
+        console.log("✅ Firebase Admin SDK initialized from file");
+      } else {
+        console.log("⚠️  Firebase Admin: No credentials found");
+        console.log("   Set GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable");
+        console.log("   or add middleware/serviceAccount.json file");
+        admin = null;
+      }
+    }
+  } else {
+    firebaseInitialized = true;
   }
 } catch (error) {
-  console.log("⚠️  Firebase Admin SDK not available, FCM notifications disabled:", error.message);
+  console.log("⚠️  Firebase Admin SDK not available:", error.message);
+  console.log("   FCM notifications will be disabled");
   admin = null;
 }
 
