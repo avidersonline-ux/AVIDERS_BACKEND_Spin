@@ -16,7 +16,7 @@
       "type": "bonus_spin",
       "value": 2,
       "probability": 0.08,
-      "label": "2 Free Spins 🎉"
+      "label": "2 Free Spins"
     },
     {
       "type": "coins",
@@ -46,13 +46,13 @@
       "type": "coins",
       "value": 100,
       "probability": 0.02,
-      "label": "100 AVD Coins 🏆"
+      "label": "100 AVD Coins"
     },
     {
       "type": "bonus_spin",
       "value": 1,
       "probability": 0.13,
-      "label": "1 Free Spin 🎁"
+      "label": "1 Free Spin"
     },
     {
       "type": "none",
