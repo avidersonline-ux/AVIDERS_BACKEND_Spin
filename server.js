@@ -211,10 +211,15 @@ const userSchema = new mongoose.Schema({
 
 const spinHistorySchema = new mongoose.Schema({
   uid: { type: String, required: true },
-  reward_type: { type: String, required: true },
-  reward_value: { type: Number, default: 0 },
-  reward_code: { type: String, default: null },
-  reward_label: { type: String, required: true },
+  email: { type: String, default: "" },
+  spinSource: { type: String, required: true, enum: ['daily_free', 'ad_rewarded', 'bonus', 'regular'] },
+  sector: { type: Number, required: true },
+  rewardType: { type: String, required: true },
+  rewardValue: { type: Number, default: 0 },
+  rewardLabel: { type: String, required: true },
+  rewardCode: { type: String, default: null },
+  coinsEarned: { type: Number, default: 0 },
+  walletAfter: { type: Number, required: true },
   timestamp: { type: Date, default: Date.now }
 }, {
   timestamps: true
@@ -415,14 +420,16 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
       return res.json({ success: false, message: "No spins available" });
     }
 
-    // Use free spin first, then bonus spins
-    let freeSpinUsed = false;
+    // Determine spin source and deduct
+    let spinSource = 'regular';
     
     if (user.freeSpins > 0) {
       user.freeSpins -= 1;
-      freeSpinUsed = true;
-    } else {
+      spinSource = 'daily_free';
+    } else if (user.bonusSpins > 0) {
       user.bonusSpins -= 1;
+      // Bonus spins come from ad rewards
+      spinSource = 'ad_rewarded';
     }
 
     user.lastSpin = new Date();
@@ -455,13 +462,20 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
     // ✅ SAVE USER DATA TO MONGODB
     await user.save();
 
-    // ✅ SAVE SPIN HISTORY TO MONGODB
+    // ✅ SAVE SPIN HISTORY TO MONGODB with spinSource
+    const coinsEarned = reward.type === 'coins' ? reward.value : 0;
+    
     const spinHistory = new SpinHistory({
       uid: uid,
-      reward_type: reward.type,
-      reward_value: reward.value,
-      reward_code: reward.code,
-      reward_label: reward.label
+      email: user.email || '',
+      spinSource: spinSource,
+      sector: reward.sector,
+      rewardType: reward.type,
+      rewardValue: reward.value || 0,
+      rewardLabel: reward.label,
+      rewardCode: reward.code || null,
+      coinsEarned: coinsEarned,
+      walletAfter: user.walletCoins
     });
     await spinHistory.save();
 
