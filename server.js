@@ -506,11 +506,29 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
     }
 
     const user = await User.findOne({ uid });
-    const spinHistory = await SpinHistory.find({ uid }).sort({ timestamp: -1 }).limit(50);
+    const spinHistoryDocs = await SpinHistory.find({ uid }).sort({ timestamp: -1 }).limit(50);
 
     if (!user) {
       return res.json({ success: false, message: "User not found" });
     }
+
+    // Format history with correct field names for Flutter
+    const formattedHistory = spinHistoryDocs.map(doc => ({
+      _id: doc._id.toString(),
+      uid: doc.uid,
+      email: doc.email,
+      spinSource: doc.spinSource,
+      sector: doc.sector,
+      rewardType: doc.rewardType,
+      rewardValue: doc.rewardValue,
+      rewardLabel: doc.rewardLabel,
+      rewardCode: doc.rewardCode,
+      coinsEarned: doc.coinsEarned,
+      walletAfter: doc.walletAfter,
+      timestamp: doc.timestamp
+    }));
+
+    console.log(`📖 Ledger retrieved for ${uid}: ${formattedHistory.length} history entries`);
 
     res.json({
       success: true,
@@ -521,8 +539,8 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
         walletCoins: user.walletCoins,
         createdAt: user.createdAt
       },
-      spinHistory: spinHistory,
-      totalSpins: spinHistory.length
+      history: formattedHistory,
+      totalSpins: formattedHistory.length
     });
   } catch (error) {
     console.error('❌ Ledger error:', error);
