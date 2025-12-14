@@ -206,7 +206,12 @@ const userSchema = new mongoose.Schema({
   bonusSpins: { type: Number, default: 0 },
   walletCoins: { type: Number, default: 100 },
   lastSpin: { type: Date, default: null },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  // Lifetime spin statistics
+  totalSpinsCount: { type: Number, default: 0 },
+  dailyFreeSpinsCount: { type: Number, default: 0 },
+  adBonusSpinsCount: { type: Number, default: 0 },
+  wonBonusSpinsCount: { type: Number, default: 0 }
 });
 
 const spinHistorySchema = new mongoose.Schema({
@@ -328,7 +333,13 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
       free_spin_available: user.freeSpins > 0,
       bonus_spins: user.bonusSpins,
       wallet_coins: user.walletCoins,
-      rewards: frontendRewards
+      rewards: frontendRewards,
+      statistics: {
+        totalSpins: user.totalSpinsCount || 0,
+        dailyFreeSpins: user.dailyFreeSpinsCount || 0,
+        adBonusSpins: user.adBonusSpinsCount || 0,
+        wonBonusSpins: user.wonBonusSpinsCount || 0
+      }
     });
   } catch (error) {
     console.error('❌ Status error:', error);
@@ -426,12 +437,14 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
     if (user.freeSpins > 0) {
       user.freeSpins -= 1;
       spinSource = 'daily_free';
+      user.dailyFreeSpinsCount += 1;  // ✅ Increment daily free counter
     } else if (user.bonusSpins > 0) {
       user.bonusSpins -= 1;
-      // Bonus spins come from ad rewards
       spinSource = 'ad_rewarded';
+      user.adBonusSpinsCount += 1;  // ✅ Increment ad bonus counter
     }
 
+    user.totalSpinsCount += 1;  // ✅ Increment total spin counter
     user.lastSpin = new Date();
 
     // ✅ USE REWARDS FROM CONFIG FILE with probability-based selection
@@ -457,6 +470,12 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
     // Update wallet if coins reward
     if (reward.type === "coins") {
       user.walletCoins += reward.value;
+    }
+    
+    // Update bonus spins if bonus_spin reward
+    if (reward.type === "bonus_spin") {
+      user.bonusSpins += reward.value;
+      user.wonBonusSpinsCount += reward.value;  // ✅ Increment won spins counter
     }
 
     // ✅ SAVE USER DATA TO MONGODB
