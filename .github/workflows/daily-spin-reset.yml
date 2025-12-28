@@ -1,0 +1,30 @@
+name: Daily Spin Reset
+
+on:
+  schedule:
+    # Runs at 00:00 UTC every day (5:30 AM IST)
+    - cron: '0 0 * * *'
+  # Also allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+jobs:
+  reset-daily-spins:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reset daily free spins
+        run: |
+          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
+            -H "Content-Type: application/json" \
+            -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
+            -d '{}'
+      
+      - name: Send success notification
+        if: success()
+        run: |
+          echo "✅ Daily spin reset completed successfully at $(date)"
+          
+      - name: Send failure notification
+        if: failure()
+        run: |
+          echo "❌ Daily spin reset failed at $(date)"
+          exit 1
