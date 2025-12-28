@@ -63,6 +63,9 @@ try {
 
 const app = express();
 
+// FIX FOR RENDER PROXY - Add this line
+app.set('trust proxy', 1);
+
 // =====================
 // SECURITY MIDDLEWARE
 // =====================
@@ -246,6 +249,24 @@ app.use((req, res, next) => {
 // =====================
 // API ENDPOINTS
 // =====================
+
+// ADDED: Root route for friendly message
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "🎰 AVIDERS Spin Wheel API Server",
+    version: "2.0.0",
+    endpoints: {
+      health: "/health",
+      spin_status: "/api/spin/status",
+      spin: "/api/spin/spin",
+      admin_reset: "/api/spin/admin/reset-daily",
+      admin_notify: "/api/spin/admin/run-notify",
+      admin_users: "/api/spin/admin/users"
+    },
+    documentation: "All API endpoints require POST with JSON body except /health and /"
+  });
+});
 
 // Health check with DB status
 app.get("/health", async (req, res) => {
@@ -686,26 +707,47 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
     let notifiedCount = 0;
     let failedCount = 0;
 
-    // FCM payload
-    const payload = {
-      notification: {
-        title: "🎰 Your Free Spin is Ready!",
-        body: "Come back and spin the wheel to win amazing rewards!",
-        sound: "default"
-      },
-      data: {
-        type: "daily_spin_reminder",
-        screen: "spin_wheel"
-      }
-    };
-
     // Send notifications to each user
     for (const user of users) {
       if (user.fcm_tokens && user.fcm_tokens.length > 0) {
         try {
-          await admin.messaging().sendToDevice(user.fcm_tokens, payload);
+          // Create multicast message for all tokens of this user
+          const message = {
+            notification: {
+              title: "🎰 Your Free Spin is Ready!",
+              body: "Come back and spin the wheel to win amazing rewards!",
+            },
+            tokens: user.fcm_tokens, // Array of tokens
+            data: {
+              type: "daily_spin_reminder",
+              screen: "spin_wheel",
+              uid: user.uid
+            }
+          };
+          
+          // Send multicast message
+          const response = await admin.messaging().sendMulticast(message);
           notifiedCount++;
-          console.log(`✅ Notification sent to user: ${user.uid}`);
+          console.log(`✅ Multicast sent to user: ${user.uid}, success: ${response.successCount}, failure: ${response.failureCount}`);
+          
+          // Clean up invalid tokens
+          if (response.failureCount > 0) {
+            const failedTokens = [];
+            response.responses.forEach((resp, idx) => {
+              if (!resp.success) {
+                failedTokens.push(user.fcm_tokens[idx]);
+              }
+            });
+            
+            // Remove failed tokens from database
+            if (failedTokens.length > 0) {
+              await User.updateOne(
+                { uid: user.uid },
+                { $pull: { fcm_tokens: { $in: failedTokens } } }
+              );
+              console.log(`🧹 Cleaned ${failedTokens.length} invalid FCM tokens for user: ${user.uid}`);
+            }
+          }
         } catch (error) {
           failedCount++;
           console.error(`❌ Failed to notify user ${user.uid}:`, error.message);
