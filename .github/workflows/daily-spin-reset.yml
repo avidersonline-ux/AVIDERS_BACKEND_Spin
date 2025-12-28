@@ -1,30 +1,56 @@
-name: Daily Spin Reset
+name: Daily Spin Tasks
 
 on:
   schedule:
-    # Runs at 00:00 UTC every day (5:30 AM IST)
+    # Runs at 00:00 UTC (5:30 AM IST) for reset
     - cron: '0 0 * * *'
-  # Also allow manual trigger from GitHub UI
+    # Runs at 14:00 UTC (7:30 PM IST) for notifications
+    - cron: '0 14 * * *'
   workflow_dispatch:
 
 jobs:
-  reset-daily-spins:
+  daily-tasks:
     runs-on: ubuntu-latest
     steps:
-      - name: Reset daily free spins
+      - name: Check current time
         run: |
+          echo "Current UTC time: $(date -u)"
+          echo "Current IST time: $(TZ='Asia/Kolkata' date)"
+          
+      - name: Determine which task to run
+        id: schedule
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" = "00" ]; then
+            echo "TASK=reset" >> $GITHUB_OUTPUT
+            echo "Running RESET task (midnight UTC)"
+          elif [ "$HOUR" = "14" ]; then
+            echo "TASK=notify" >> $GITHUB_OUTPUT
+            echo "Running NOTIFY task (2 PM UTC)"
+          else
+            echo "TASK=manual" >> $GITHUB_OUTPUT
+            echo "Running MANUAL trigger"
+          fi
+      
+      - name: Reset daily spins (runs at 00:00 UTC)
+        if: steps.schedule.outputs.TASK == 'reset' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "🔄 Resetting daily free spins..."
           curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
             -d '{}'
-      
-      - name: Send success notification
-        if: success()
+            
+      - name: Send notifications (runs at 14:00 UTC)
+        if: steps.schedule.outputs.TASK == 'notify' || github.event_name == 'workflow_dispatch'
         run: |
-          echo "✅ Daily spin reset completed successfully at $(date)"
-          
-      - name: Send failure notification
-        if: failure()
+          echo "📱 Sending FCM notifications..."
+          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/run-notify \
+            -H "Content-Type: application/json" \
+            -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
+            -d '{}'
+            
+      - name: Log completion
         run: |
-          echo "❌ Daily spin reset failed at $(date)"
-          exit 1
+          echo "✅ GitHub Action completed successfully at $(date -u)"
+          echo "Task performed: ${{ steps.schedule.outputs.TASK }}"
