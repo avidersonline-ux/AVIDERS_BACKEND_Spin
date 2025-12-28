@@ -679,7 +679,7 @@ app.post("/api/spin/admin/reset-daily", async (req, res) => {
   }
 });
 
-// ADMIN endpoint - Send FCM notifications to eligible users
+// ADMIN endpoint - Send FCM notifications to eligible users (COMPATIBLE VERSION)
 app.post("/api/spin/admin/run-notify", async (req, res) => {
   try {
     // Internal authentication
@@ -706,48 +706,122 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
 
     let notifiedCount = 0;
     let failedCount = 0;
+    let totalMessagesSent = 0;
 
     // Send notifications to each user
     for (const user of users) {
       if (user.fcm_tokens && user.fcm_tokens.length > 0) {
+        let userSuccess = 0;
+        let userFailed = 0;
+        
+        // Try different Firebase methods based on what's available
         try {
-          // Create multicast message for all tokens of this user
-          const message = {
-            notification: {
-              title: "🎰 Your Free Spin is Ready!",
-              body: "Come back and spin the wheel to win amazing rewards!",
-            },
-            tokens: user.fcm_tokens, // Array of tokens
-            data: {
-              type: "daily_spin_reminder",
-              screen: "spin_wheel",
-              uid: user.uid
-            }
-          };
-          
-          // Send multicast message
-          const response = await admin.messaging().sendMulticast(message);
-          notifiedCount++;
-          console.log(`✅ Multicast sent to user: ${user.uid}, success: ${response.successCount}, failure: ${response.failureCount}`);
-          
-          // Clean up invalid tokens
-          if (response.failureCount > 0) {
-            const failedTokens = [];
-            response.responses.forEach((resp, idx) => {
-              if (!resp.success) {
-                failedTokens.push(user.fcm_tokens[idx]);
+          // METHOD 1: Try sendEach (newer Firebase versions)
+          if (typeof admin.messaging().sendEach === 'function') {
+            console.log(`🔧 Using sendEach() for user: ${user.uid}`);
+            const messages = user.fcm_tokens.map(token => ({
+              token: token,
+              notification: {
+                title: "🎰 Your Free Spin is Ready!",
+                body: "Come back and spin the wheel to win amazing rewards!",
+              },
+              data: {
+                type: "daily_spin_reminder",
+                screen: "spin_wheel",
+                uid: user.uid
               }
-            });
+            }));
             
-            // Remove failed tokens from database
-            if (failedTokens.length > 0) {
-              await User.updateOne(
-                { uid: user.uid },
-                { $pull: { fcm_tokens: { $in: failedTokens } } }
-              );
-              console.log(`🧹 Cleaned ${failedTokens.length} invalid FCM tokens for user: ${user.uid}`);
+            const response = await admin.messaging().sendEach(messages);
+            userSuccess = response.successCount;
+            userFailed = response.failureCount;
+          }
+          // METHOD 2: Try sendMulticast (some versions)
+          else if (typeof admin.messaging().sendMulticast === 'function') {
+            console.log(`🔧 Using sendMulticast() for user: ${user.uid}`);
+            const message = {
+              notification: {
+                title: "🎰 Your Free Spin is Ready!",
+                body: "Come back and spin the wheel to win amazing rewards!",
+              },
+              tokens: user.fcm_tokens,
+              data: {
+                type: "daily_spin_reminder",
+                screen: "spin_wheel",
+                uid: user.uid
+              }
+            };
+            
+            const response = await admin.messaging().sendMulticast(message);
+            userSuccess = response.successCount;
+            userFailed = response.failureCount;
+          }
+          // METHOD 3: Try sendToDevice (older versions)
+          else if (typeof admin.messaging().sendToDevice === 'function') {
+            console.log(`🔧 Using sendToDevice() for user: ${user.uid}`);
+            const payload = {
+              notification: {
+                title: "🎰 Your Free Spin is Ready!",
+                body: "Come back and spin the wheel to win amazing rewards!",
+              },
+              data: {
+                type: "daily_spin_reminder",
+                screen: "spin_wheel",
+                uid: user.uid
+              }
+            };
+            
+            const response = await admin.messaging().sendToDevice(user.fcm_tokens, payload);
+            userSuccess = response.successCount;
+            userFailed = response.failureCount;
+          }
+          // METHOD 4: Fallback - send individual messages
+          else {
+            console.log(`🔧 Using individual send() for user: ${user.uid}`);
+            const promises = user.fcm_tokens.map(token => 
+              admin.messaging().send({
+                token: token,
+                notification: {
+                  title: "🎰 Your Free Spin is Ready!",
+                  body: "Come back and spin the wheel to win amazing rewards!",
+                },
+                data: {
+                  type: "daily_spin_reminder",
+                  screen: "spin_wheel",
+                  uid: user.uid
+                }
+              })
+            );
+            
+            const results = await Promise.allSettled(promises);
+            userSuccess = results.filter(r => r.status === 'fulfilled').length;
+            userFailed = results.filter(r => r.status === 'rejected').length;
+            
+            // Clean up failed tokens
+            if (userFailed > 0) {
+              const failedTokens = [];
+              results.forEach((result, index) => {
+                if (result.status === 'rejected') {
+                  failedTokens.push(user.fcm_tokens[index]);
+                }
+              });
+              
+              if (failedTokens.length > 0) {
+                await User.updateOne(
+                  { uid: user.uid },
+                  { $pull: { fcm_tokens: { $in: failedTokens } } }
+                );
+                console.log(`🧹 Cleaned ${failedTokens.length} invalid tokens for ${user.uid}`);
+              }
             }
           }
+          
+          totalMessagesSent += userSuccess;
+          if (userSuccess > 0) notifiedCount++;
+          if (userFailed > 0) failedCount++;
+          
+          console.log(`✅ User ${user.uid}: ${userSuccess} sent, ${userFailed} failed`);
+          
         } catch (error) {
           failedCount++;
           console.error(`❌ Failed to notify user ${user.uid}:`, error.message);
@@ -755,14 +829,15 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
       }
     }
 
-    console.log(`📊 Notification summary: ${notifiedCount} sent, ${failedCount} failed`);
+    console.log(`📊 Notification summary: ${notifiedCount} users notified, ${totalMessagesSent} messages sent, ${failedCount} users failed`);
 
     res.json({
       success: true,
-      message: "FCM notifications sent",
+      message: "FCM notifications processed",
       total_eligible: users.length,
-      notified_count: notifiedCount,
-      failed_count: failedCount
+      users_notified: notifiedCount,
+      messages_sent: totalMessagesSent,
+      users_failed: failedCount
     });
   } catch (error) {
     console.error('❌ Run notify error:', error);
