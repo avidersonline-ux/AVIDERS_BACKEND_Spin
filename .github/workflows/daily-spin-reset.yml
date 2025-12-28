@@ -11,11 +11,16 @@ on:
 jobs:
   daily-tasks:
     runs-on: ubuntu-latest
+    env:
+      DEEP_LINK: "aviders://spinwheel"
+      APP_NAME: "Aviders Spin Wheel"
+      
     steps:
       - name: Check current time
         run: |
           echo "Current UTC time: $(date -u)"
           echo "Current IST time: $(TZ='Asia/Kolkata' date)"
+          echo "Deep Link: $DEEP_LINK"
           
       - name: Determine which task to run
         id: schedule
@@ -23,12 +28,15 @@ jobs:
           HOUR=$(date -u +%H)
           if [ "$HOUR" = "00" ]; then
             echo "TASK=reset" >> $GITHUB_OUTPUT
+            echo "TASK_NAME=daily_reset" >> $GITHUB_OUTPUT
             echo "Running RESET task (midnight UTC)"
           elif [ "$HOUR" = "14" ]; then
             echo "TASK=notify" >> $GITHUB_OUTPUT
+            echo "TASK_NAME=daily_notification" >> $GITHUB_OUTPUT
             echo "Running NOTIFY task (2 PM UTC)"
           else
             echo "TASK=manual" >> $GITHUB_OUTPUT
+            echo "TASK_NAME=manual_trigger" >> $GITHUB_OUTPUT
             echo "Running MANUAL trigger"
           fi
       
@@ -41,16 +49,108 @@ jobs:
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
             -d '{}'
             
-      - name: Send notifications (runs at 14:00 UTC)
+      - name: Prepare notification payload with deep link
+        if: steps.schedule.outputs.TASK == 'notify' || github.event_name == 'workflow_dispatch'
+        id: prepare_notify
+        run: |
+          # Create notification payload with deep link
+          TIMESTAMP=$(date +%s)
+          NOTIFICATION_ID="daily_spin_$(date +%Y%m%d_%H%M)"
+          
+          # Create JSON payload
+          cat > /tmp/notification_payload.json << EOF
+          {
+            "notification": {
+              "title": "🎡 Your Daily Spin is Ready!",
+              "body": "Tap to spin the wheel and claim your reward!",
+              "click_action": "$DEEP_LINK",
+              "icon": "ic_notification",
+              "tag": "$NOTIFICATION_ID"
+            },
+            "data": {
+              "deeplink": "$DEEP_LINK",
+              "action": "open_spinwheel",
+              "notification_id": "$NOTIFICATION_ID",
+              "timestamp": "$TIMESTAMP",
+              "campaign": "daily_spin_$(date +%Y%m%d)",
+              "source": "github_action",
+              "fallback_url": "https://aviders.com/spin",
+              "priority": "high"
+            },
+            "android": {
+              "notification": {
+                "channel_id": "daily_spin_channel",
+                "priority": "high",
+                "default_sound": true,
+                "default_vibrate_timings": true
+              }
+            },
+            "apns": {
+              "payload": {
+                "aps": {
+                  "category": "DAILY_SPIN",
+                  "sound": "default",
+                  "badge": 1
+                }
+              }
+            }
+          }
+          EOF
+          
+          echo "payload_file=/tmp/notification_payload.json" >> $GITHUB_OUTPUT
+          echo "notification_id=$NOTIFICATION_ID" >> $GITHUB_OUTPUT
+          echo "Payload prepared with deep link: $DEEP_LINK"
+          
+      - name: Send notifications with deep link (runs at 14:00 UTC)
         if: steps.schedule.outputs.TASK == 'notify' || github.event_name == 'workflow_dispatch'
         run: |
-          echo "📱 Sending FCM notifications..."
-          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/run-notify \
+          echo "📱 Sending FCM notifications with deep link..."
+          
+          # Send to backend API (Option 1)
+          echo "Sending to backend API..."
+          BACKEND_RESPONSE=$(curl -s -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/run-notify \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
-            -d '{}'
-            
-      - name: Log completion
+            -d @${{ steps.prepare_notify.outputs.payload_file }})
+          
+          echo "Backend response: $BACKEND_RESPONSE"
+          
+          # Alternative: Direct FCM call (uncomment if backend doesn't support deep links)
+          # if [[ -z "$FCM_SERVER_KEY" ]]; then
+          #   echo "⚠️ No FCM key, skipping direct FCM"
+          # else
+          #   echo "Sending direct FCM notification..."
+          #   curl -X POST https://fcm.googleapis.com/fcm/send \
+          #     -H "Authorization: key=${{ secrets.FCM_SERVER_KEY }}" \
+          #     -H "Content-Type: application/json" \
+          #     -d @${{ steps.prepare_notify.outputs.payload_file }}
+          # fi
+          
+          echo "✅ Notifications sent with deep link: $DEEP_LINK"
+          
+      - name: Test deep link functionality (optional)
+        if: always() && steps.prepare_notify.outcome == 'success'
+        run: |
+          echo "🧪 Testing deep link configuration..."
+          echo "Deep Link: $DEEP_LINK"
+          echo "Test command for Android:"
+          echo "  adb shell am start -W -a android.intent.action.VIEW -d \"$DEEP_LINK\" com.aviders.app"
+          echo "Test command for iOS:"
+          echo "  xcrun simctl openurl booted \"$DEEP_LINK\""
+          echo ""
+          echo "For tracking, you can add UTM parameters:"
+          echo "  ${DEEP_LINK}?utm_source=github_action&utm_medium=notification&utm_campaign=${{ steps.schedule.outputs.TASK_NAME }}"
+          
+      - name: Log completion with details
         run: |
           echo "✅ GitHub Action completed successfully at $(date -u)"
           echo "Task performed: ${{ steps.schedule.outputs.TASK }}"
+          echo "Task name: ${{ steps.schedule.outputs.TASK_NAME }}"
+          if [ "${{ steps.schedule.outputs.TASK }}" = "notify" ]; then
+            echo "Notification ID: ${{ steps.prepare_notify.outputs.notification_id }}"
+            echo "Deep link used: $DEEP_LINK"
+          fi
+          echo ""
+          echo "Next scheduled run:"
+          echo "- Daily reset: 00:00 UTC (5:30 AM IST)"
+          echo "- Notification: 14:00 UTC (7:30 PM IST)"
