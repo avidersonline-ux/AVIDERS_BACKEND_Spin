@@ -99,6 +99,25 @@ app.use(cors({
 
 app.use(express.json());
 
+// Referral validation schema
+const validateReferralRequest = (req, res, next) => {
+  const schema = Joi.object({
+    uid: Joi.string().min(5).max(100).required(),
+    referralCode: Joi.string().pattern(/^AVD\d{6}$/).required().messages({
+      'string.pattern.base': 'Referral code must be in format AVD followed by 6 digits (e.g., AVD123456)'
+    })
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ 
+      success: false, 
+      message: error.details[0].message 
+    });
+  }
+  next();
+};
+
 // =====================
 // RATE LIMITING
 // =====================
@@ -215,12 +234,17 @@ const userSchema = new mongoose.Schema({
   dailyFreeSpinsCount: { type: Number, default: 0 },
   adBonusSpinsCount: { type: Number, default: 0 },
   wonBonusSpinsCount: { type: Number, default: 0 }
+    // REFERRAL FIELDS
+  referralCode: { type: String, unique: true },
+  referredBy: { type: String, default: null },
+  referralRewarded: { type: Boolean, default: false },
+  referralEarnings: { type: Number, default: 0 }
 });
 
 const spinHistorySchema = new mongoose.Schema({
   uid: { type: String, required: true },
   email: { type: String, default: "" },
-  spinSource: { type: String, required: true, enum: ['daily_free', 'ad_rewarded', 'bonus', 'regular'] },
+  spinSource: { type: String, required: true, enum: ['daily_free', 'ad_rewarded', 'bonus', 'regular', 'referral'] },
   sector: { type: Number, required: true },
   rewardType: { type: String, required: true },
   rewardValue: { type: Number, default: 0 },
@@ -260,6 +284,7 @@ app.get("/", (req, res) => {
       health: "/health",
       spin_status: "/api/spin/status",
       spin: "/api/spin/spin",
+      referral_apply: "/api/referral/apply",
       admin_reset: "/api/spin/admin/reset-daily",
       admin_notify: "/api/spin/admin/run-notify",
       admin_users: "/api/spin/admin/users"
@@ -309,6 +334,7 @@ const ensureUser = async (uid) => {
         freeSpins: 1,
         bonusSpins: 0,
         walletCoins: 100
+        referralCode: 'AVD' + uid.slice(-6)
       });
       await user.save();
       console.log(`👤 New user CREATED in MongoDB: ${uid}`);
