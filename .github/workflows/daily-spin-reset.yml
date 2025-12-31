@@ -1,226 +1,140 @@
-name: Daily Spin Tasks
+name: Daily Spin Tasks - Debug Version
 
 on:
-  schedule:
-    # Runs at 00:00 UTC (5:30 AM IST) for reset
-    - cron: '0 0 * * *'
-    # Runs at 14:00 UTC (7:30 PM IST) for notifications
-    - cron: '0 14 * * *'
-  workflow_dispatch:
+  workflow_dispatch:  # Only manual triggers until we fix it
 
 jobs:
-  daily-tasks:
+  debug-spin-tasks:
     runs-on: ubuntu-latest
-    env:
-      DEEP_LINK: "aviders://spinwheel"
-      APP_NAME: "Aviders Spin Wheel"
-      BACKEND_URL: "https://aviders-backend-spin-1.onrender.com"
-      
+    
     steps:
-      - name: Debug Workflow Trigger
+      - name: Test Secret and Backend
+        id: test_setup
         run: |
-          echo "🚀 Workflow Trigger: ${{ github.event_name }}"
-          echo "📅 UTC Time: $(date -u)"
-          echo "📅 IST Time: $(TZ='Asia/Kolkata' date)"
-          echo "🔧 GitHub Ref: ${{ github.ref }}"
-          echo "👤 GitHub Actor: ${{ github.actor }}"
+          echo "🔐 Testing configuration..."
           
-      - name: Check Secrets Availability
-        run: |
-          echo "🔐 Checking secrets availability..."
+          # Check if secret is set
           if [ -z "${{ secrets.SPIN_INTERNAL_KEY }}" ]; then
-            echo "❌ SPIN_INTERNAL_KEY secret is empty!"
+            echo "❌ ERROR: SPIN_INTERNAL_KEY is empty or not set!"
+            echo "Go to: Settings → Secrets → Actions → Update SPIN_INTERNAL_KEY"
+            exit 1
           else
-            echo "✅ SPIN_INTERNAL_KEY secret is available"
-            echo "Key length: ${#SPIN_INTERNAL_KEY} characters"
+            echo "✅ Secret is set (length: ${#SPIN_INTERNAL_KEY} chars)"
+            
+            # Show first 5 chars for verification (not the whole key)
+            KEY_PREVIEW="${SPIN_INTERNAL_KEY:0:5}..."
+            KEY_LENGTH=${#SPIN_INTERNAL_KEY}
+            echo "Key preview: $KEY_PREVIEW (total: $KEY_LENGTH chars)"
           fi
           
-      - name: Determine Scheduled Task
-        id: schedule
-        run: |
-          HOUR=$(date -u +%H)
-          MINUTE=$(date -u +%M)
+          # Test backend with the actual key
+          echo "🔍 Testing backend connection with secret..."
+          BACKEND_URL="https://aviders-backend-spin-1.onrender.com"
           
-          echo "🕐 UTC Time: $HOUR:$MINUTE"
-          echo "🔄 GitHub Event: ${{ github.event_name }}"
-          
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            # Scheduled run - check which cron triggered it
-            if [ "$HOUR" = "00" ] && [ "$MINUTE" = "00" ]; then
-              echo "TASK=reset" >> $GITHUB_OUTPUT
-              echo "TASK_NAME=midnight_reset" >> $GITHUB_OUTPUT
-              echo "🎯 Scheduled: DAILY RESET (00:00 UTC)"
-            elif [ "$HOUR" = "14" ] && [ "$MINUTE" = "00" ]; then
-              echo "TASK=notify" >> $GITHUB_OUTPUT
-              echo "TASK_NAME=afternoon_notification" >> $GITHUB_OUTPUT
-              echo "🎯 Scheduled: DAILY NOTIFICATION (14:00 UTC)"
-            else
-              echo "TASK=unknown_schedule" >> $GITHUB_OUTPUT
-              echo "TASK_NAME=unknown" >> $GITHUB_OUTPUT
-              echo "⚠️ Unexpected schedule time: $HOUR:$MINUTE"
-            fi
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Manual trigger - run BOTH tasks
-            echo "TASK=both" >> $GITHUB_OUTPUT
-            echo "TASK_NAME=manual_full_run" >> $GITHUB_OUTPUT
-            echo "🎯 Manual Trigger: Running BOTH reset and notify"
-          else
-            echo "TASK=other" >> $GITHUB_OUTPUT
-            echo "TASK_NAME=other_trigger" >> $GITHUB_OUTPUT
-            echo "ℹ️ Other trigger type: ${{ github.event_name }}"
-          fi
-          
-      - name: Reset Daily Spins (00:00 UTC or Manual)
-        id: reset_spins
-        if: steps.schedule.outputs.TASK == 'reset' || steps.schedule.outputs.TASK == 'both'
-        run: |
-          echo "🔄 RESETTING DAILY SPINS..."
-          echo "⏰ Time: $(date -u)"
-          echo "🌐 Backend: $BACKEND_URL"
-          
-          # Test backend connection first
-          echo "🔍 Testing backend connection..."
-          if curl -s --head --request GET "$BACKEND_URL" | grep "200 OK"; then
-            echo "✅ Backend is reachable"
-          else
-            echo "⚠️ Backend might be sleeping (Render free tier)"
-          fi
-          
-          # Call reset API
-          echo "📤 Calling reset API..."
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+          # Make a simple test call
+          TEST_RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X POST "$BACKEND_URL/api/spin/admin/reset-daily" \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
             -d '{}')
+            
+          HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$TEST_RESPONSE" | head -n -1)
           
-          # Extract response
-          HTTP_STATUS=$(echo "$RESPONSE" | grep HTTP_STATUS | cut -d':' -f2)
-          RESPONSE_BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
+          echo "Backend HTTP Status: $HTTP_CODE"
+          echo "Backend Response: $RESPONSE_BODY"
           
-          echo "📊 Reset Response Status: $HTTP_STATUS"
-          echo "📄 Reset Response Body: $RESPONSE_BODY"
-          
-          if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "201" ]]; then
-            echo "✅ DAILY SPINS RESET SUCCESSFUL!"
-            echo "success=true" >> $GITHUB_OUTPUT
+          if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" ]]; then
+            echo "✅ Backend connection SUCCESSFUL!"
+            echo "ready=true" >> $GITHUB_OUTPUT
           else
-            echo "❌ RESET FAILED! Status: $HTTP_STATUS"
-            echo "🔍 Response: $RESPONSE_BODY"
-            echo "success=false" >> $GITHUB_OUTPUT
-            exit 1
+            echo "❌ Backend connection FAILED!"
+            echo "ready=false" >> $GITHUB_OUTPUT
+            echo "🔧 Troubleshooting tips:"
+            echo "1. Check if the key in GitHub matches your backend's expected key"
+            echo "2. Check backend logs for authentication errors"
+            echo "3. Verify backend is running (Render free tier sleeps after inactivity)"
           fi
-          
-      - name: Prepare Notification Payload
-        id: prepare_notify
-        if: steps.schedule.outputs.TASK == 'notify' || steps.schedule.outputs.TASK == 'both'
+      
+      - name: Wake Up Backend (if on free tier)
+        if: steps.test_setup.outputs.ready == 'false'
         run: |
-          echo "📝 PREPARING NOTIFICATION..."
+          echo "⏰ Waking up Render backend (free tier sleeps after 15min)..."
           
-          TIMESTAMP=$(date +%s)
-          NOTIFICATION_ID="daily_spin_$(date +%Y%m%d_%H%M%S)"
+          # First, try to access the root URL to wake it up
+          curl -s -o /dev/null -w "Wake-up status: %{http_code}\n" \
+            https://aviders-backend-spin-1.onrender.com
           
-          # Create payload
-          cat > /tmp/notification_payload.json << EOF
-          {
-            "notification": {
-              "title": "🎡 Daily Spin Ready!",
-              "body": "Spin now and claim your reward!",
-              "click_action": "$DEEP_LINK"
-            },
-            "data": {
-              "deeplink": "$DEEP_LINK",
-              "action": "open_spinwheel",
-              "notification_id": "$NOTIFICATION_ID",
-              "timestamp": "$TIMESTAMP"
-            }
-          }
-          EOF
+          echo "Waiting 15 seconds for backend to fully start..."
+          sleep 15
           
-          echo "📄 Payload created:"
-          cat /tmp/notification_payload.json
-          
-          echo "payload_file=/tmp/notification_payload.json" >> $GITHUB_OUTPUT
-          echo "notification_id=$NOTIFICATION_ID" >> $GITHUB_OUTPUT
-          
-      - name: Send Notifications (14:00 UTC or Manual)
-        id: send_notify
-        if: steps.schedule.outputs.TASK == 'notify' || steps.schedule.outputs.TASK == 'both'
-        run: |
-          echo "📱 SENDING NOTIFICATIONS..."
-          echo "🔑 Using secret key with length: ${#SPIN_INTERNAL_KEY}"
-          
-          # Test backend connection
-          echo "🔍 Testing backend connection..."
-          BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL")
-          echo "Backend status: $BACKEND_STATUS"
-          
-          if [ "$BACKEND_STATUS" != "200" ]; then
-            echo "⚠️ Backend might be sleeping. Waking it up..."
-            curl -s -o /dev/null "$BACKEND_URL" && sleep 10
-          fi
-          
-          # Send notification via backend
-          echo "📤 Sending to: $BACKEND_URL/api/spin/admin/run-notify"
-          
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X POST "$BACKEND_URL/api/spin/admin/run-notify" \
+          echo "🔄 Retrying with authentication..."
+          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
-            -d @${{ steps.prepare_notify.outputs.payload_file }})
-          
-          HTTP_STATUS=$(echo "$RESPONSE" | grep HTTP_STATUS | cut -d':' -f2)
-          RESPONSE_BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
-          
-          echo "📊 Notification Response Status: $HTTP_STATUS"
-          echo "📄 Notification Response Body: $RESPONSE_BODY"
-          
-          if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "201" ]]; then
-            echo "✅ NOTIFICATIONS SENT SUCCESSFULLY!"
-            echo "success=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ NOTIFICATION FAILED! Status: $HTTP_STATUS"
-            echo "🔍 Troubleshooting tips:"
-            echo "1. Check if SPIN_INTERNAL_KEY secret is correct"
-            echo "2. Verify backend is running"
-            echo "3. Check backend logs for 'Internal access denied'"
-            echo "success=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          
-      - name: Workflow Summary
-        run: |
-          echo ""
-          echo "📋 WORKFLOW SUMMARY"
-          echo "=================="
-          echo "Trigger: ${{ github.event_name }}"
-          echo "Task: ${{ steps.schedule.outputs.TASK_NAME }}"
-          echo "Time: $(date -u)"
-          echo ""
-          
-          if [ "${{ steps.schedule.outputs.TASK }}" = "reset" ]; then
-            echo "✅ Reset executed: ${{ steps.reset_spins.outputs.success }}"
-            echo "🔔 Notification: Skipped (runs at 14:00 UTC)"
-          elif [ "${{ steps.schedule.outputs.TASK }}" = "notify" ]; then
-            echo "🔄 Reset: Skipped (runs at 00:00 UTC)"
-            echo "✅ Notification executed: ${{ steps.send_notify.outputs.success }}"
-          elif [ "${{ steps.schedule.outputs.TASK }}" = "both" ]; then
-            echo "✅ Reset executed: ${{ steps.reset_spins.outputs.success }}"
-            echo "✅ Notification executed: ${{ steps.send_notify.outputs.success }}"
-          fi
-          
-          echo ""
-          echo "⏰ Next Scheduled Runs:"
-          echo "  • Daily Reset: 00:00 UTC (5:30 AM IST)"
-          echo "  • Notification: 14:00 UTC (7:30 PM IST)"
-          echo ""
-          echo "🔗 Deep Link: $DEEP_LINK"
-          
-      - name: Alert on Failure
+            -d '{}' \
+            --max-time 30
+      
+      - name: Fix Instructions
         if: failure()
         run: |
-          echo "🚨 WORKFLOW FAILED!"
-          echo "Please check:"
-          echo "1. GitHub Secrets (SPIN_INTERNAL_KEY)"
-          echo "2. Backend server status"
-          echo "3. Backend logs for errors"
+          echo ""
+          echo "🔧 FIX INSTRUCTIONS 🔧"
+          echo "======================"
+          echo ""
+          echo "PROBLEM: 'Internal access denied' (403)"
+          echo ""
+          echo "SOLUTION 1: Update GitHub Secret"
+          echo "---------------------------------"
+          echo "1. Get the correct key from your backend:"
+          echo "   - Check backend environment variables"
+          echo "   - Look for: INTERNAL_API_KEY, SPIN_INTERNAL_KEY, or similar"
+          echo ""
+          echo "2. Update GitHub:"
+          echo "   - Go to: https://github.com/YOUR_USER/YOUR_REPO/settings/secrets/actions"
+          echo "   - Click 'Update' next to SPIN_INTERNAL_KEY"
+          echo "   - Paste the EXACT key (check for spaces, case sensitivity)"
+          echo ""
+          echo "SOLUTION 2: Check Backend Code"
+          echo "------------------------------"
+          echo "Your backend code should have something like:"
+          echo ""
+          echo "  const internalKey = req.headers['x-internal-key'];"
+          echo "  const expectedKey = process.env.SPIN_INTERNAL_KEY;"
+          echo "  "
+          echo "  if (internalKey !== expectedKey) {"
+          echo "    return res.status(403).json({"
+          echo "      success: false,"
+          echo "      message: 'Internal access denied'"
+          echo "    });"
+          echo "  }"
+          echo ""
+          echo "SOLUTION 3: Test Manually"
+          echo "-------------------------"
+          echo "Run this command with the correct key:"
+          echo ""
+          echo "  curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \\"
+          echo "    -H \"Content-Type: application/json\" \\"
+          echo "    -H \"x-internal-key: YOUR_CORRECT_KEY_HERE\" \\"
+          echo "    -d '{}'"
+          echo ""
+          echo "SOLUTION 4: Temporarily Bypass (for testing)"
+          echo "-------------------------------------------"
+          echo "In your backend code, temporarily add debug logging:"
+          echo ""
+          echo "  console.log('Received key:', internalKey);"
+          echo "  console.log('Expected key:', expectedKey);"
+          echo "  console.log('Match?:', internalKey === expectedKey);"
+          
+      - name: Run Reset (if ready)
+        if: steps.test_setup.outputs.ready == 'true'
+        run: |
+          echo "🔄 Running daily spin reset..."
+          
+          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
+            -H "Content-Type: application/json" \
+            -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
+            -d '{}' \
+            -w "\nHTTP Status: %{http_code}\n"
+          
+          echo "✅ Reset completed!"
