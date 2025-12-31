@@ -1,156 +1,140 @@
-Daily Spin Tasks
+name: Daily Spin Tasks - Debug Version
 
 on:
-  schedule:
-    # Runs at 00:00 UTC (5:30 AM IST) for reset
-    - cron: '0 0 * * *'
-    # Runs at 14:00 UTC (7:30 PM IST) for notifications
-    - cron: '0 14 * * *'
-  workflow_dispatch:
+  workflow_dispatch:  # Only manual triggers until we fix it
 
 jobs:
-  daily-tasks:
+  debug-spin-tasks:
     runs-on: ubuntu-latest
-    env:
-      DEEP_LINK: "aviders://spinwheel"
-      APP_NAME: "Aviders Spin Wheel"
-      
+    
     steps:
-      - name: Check current time
+      - name: Test Secret and Backend
+        id: test_setup
         run: |
-          echo "Current UTC time: $(date -u)"
-          echo "Current IST time: $(TZ='Asia/Kolkata' date)"
-          echo "Deep Link: $DEEP_LINK"
+          echo "🔐 Testing configuration..."
           
-      - name: Determine which task to run
-        id: schedule
-        run: |
-          HOUR=$(date -u +%H)
-          if [ "$HOUR" = "00" ]; then
-            echo "TASK=reset" >> $GITHUB_OUTPUT
-            echo "TASK_NAME=daily_reset" >> $GITHUB_OUTPUT
-            echo "Running RESET task (midnight UTC)"
-          elif [ "$HOUR" = "14" ]; then
-            echo "TASK=notify" >> $GITHUB_OUTPUT
-            echo "TASK_NAME=daily_notification" >> $GITHUB_OUTPUT
-            echo "Running NOTIFY task (2 PM UTC)"
+          # Check if secret is set
+          if [ -z "${{ secrets.SPIN_INTERNAL_KEY }}" ]; then
+            echo "❌ ERROR: SPIN_INTERNAL_KEY is empty or not set!"
+            echo "Go to: Settings → Secrets → Actions → Update SPIN_INTERNAL_KEY"
+            exit 1
           else
-            echo "TASK=manual" >> $GITHUB_OUTPUT
-            echo "TASK_NAME=manual_trigger" >> $GITHUB_OUTPUT
-            echo "Running MANUAL trigger"
+            echo "✅ Secret is set (length: ${#SPIN_INTERNAL_KEY} chars)"
+            
+            # Show first 5 chars for verification (not the whole key)
+            KEY_PREVIEW="${SPIN_INTERNAL_KEY:0:5}..."
+            KEY_LENGTH=${#SPIN_INTERNAL_KEY}
+            echo "Key preview: $KEY_PREVIEW (total: $KEY_LENGTH chars)"
+          fi
+          
+          # Test backend with the actual key
+          echo "🔍 Testing backend connection with secret..."
+          BACKEND_URL="https://aviders-backend-spin-1.onrender.com"
+          
+          # Make a simple test call
+          TEST_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST "$BACKEND_URL/api/spin/admin/reset-daily" \
+            -H "Content-Type: application/json" \
+            -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
+            -d '{}')
+            
+          HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$TEST_RESPONSE" | head -n -1)
+          
+          echo "Backend HTTP Status: $HTTP_CODE"
+          echo "Backend Response: $RESPONSE_BODY"
+          
+          if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" ]]; then
+            echo "✅ Backend connection SUCCESSFUL!"
+            echo "ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Backend connection FAILED!"
+            echo "ready=false" >> $GITHUB_OUTPUT
+            echo "🔧 Troubleshooting tips:"
+            echo "1. Check if the key in GitHub matches your backend's expected key"
+            echo "2. Check backend logs for authentication errors"
+            echo "3. Verify backend is running (Render free tier sleeps after inactivity)"
           fi
       
-      - name: Reset daily spins (runs at 00:00 UTC)
-        if: steps.schedule.outputs.TASK == 'reset' || github.event_name == 'workflow_dispatch'
+      - name: Wake Up Backend (if on free tier)
+        if: steps.test_setup.outputs.ready == 'false'
         run: |
-          echo "🔄 Resetting daily free spins..."
+          echo "⏰ Waking up Render backend (free tier sleeps after 15min)..."
+          
+          # First, try to access the root URL to wake it up
+          curl -s -o /dev/null -w "Wake-up status: %{http_code}\n" \
+            https://aviders-backend-spin-1.onrender.com
+          
+          echo "Waiting 15 seconds for backend to fully start..."
+          sleep 15
+          
+          echo "🔄 Retrying with authentication..."
           curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
-            -d '{}'
-            
-      - name: Prepare notification payload with deep link
-        if: steps.schedule.outputs.TASK == 'notify' || github.event_name == 'workflow_dispatch'
-        id: prepare_notify
+            -d '{}' \
+            --max-time 30
+      
+      - name: Fix Instructions
+        if: failure()
         run: |
-          # Create notification payload with deep link
-          TIMESTAMP=$(date +%s)
-          NOTIFICATION_ID="daily_spin_$(date +%Y%m%d_%H%M)"
+          echo ""
+          echo "🔧 FIX INSTRUCTIONS 🔧"
+          echo "======================"
+          echo ""
+          echo "PROBLEM: 'Internal access denied' (403)"
+          echo ""
+          echo "SOLUTION 1: Update GitHub Secret"
+          echo "---------------------------------"
+          echo "1. Get the correct key from your backend:"
+          echo "   - Check backend environment variables"
+          echo "   - Look for: INTERNAL_API_KEY, SPIN_INTERNAL_KEY, or similar"
+          echo ""
+          echo "2. Update GitHub:"
+          echo "   - Go to: https://github.com/YOUR_USER/YOUR_REPO/settings/secrets/actions"
+          echo "   - Click 'Update' next to SPIN_INTERNAL_KEY"
+          echo "   - Paste the EXACT key (check for spaces, case sensitivity)"
+          echo ""
+          echo "SOLUTION 2: Check Backend Code"
+          echo "------------------------------"
+          echo "Your backend code should have something like:"
+          echo ""
+          echo "  const internalKey = req.headers['x-internal-key'];"
+          echo "  const expectedKey = process.env.SPIN_INTERNAL_KEY;"
+          echo "  "
+          echo "  if (internalKey !== expectedKey) {"
+          echo "    return res.status(403).json({"
+          echo "      success: false,"
+          echo "      message: 'Internal access denied'"
+          echo "    });"
+          echo "  }"
+          echo ""
+          echo "SOLUTION 3: Test Manually"
+          echo "-------------------------"
+          echo "Run this command with the correct key:"
+          echo ""
+          echo "  curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \\"
+          echo "    -H \"Content-Type: application/json\" \\"
+          echo "    -H \"x-internal-key: YOUR_CORRECT_KEY_HERE\" \\"
+          echo "    -d '{}'"
+          echo ""
+          echo "SOLUTION 4: Temporarily Bypass (for testing)"
+          echo "-------------------------------------------"
+          echo "In your backend code, temporarily add debug logging:"
+          echo ""
+          echo "  console.log('Received key:', internalKey);"
+          echo "  console.log('Expected key:', expectedKey);"
+          echo "  console.log('Match?:', internalKey === expectedKey);"
           
-          # Create JSON payload
-          cat > /tmp/notification_payload.json << EOF
-          {
-            "notification": {
-              "title": "🎡 Your Daily Spin is Ready!",
-              "body": "Tap to spin the wheel and claim your reward!",
-              "click_action": "$DEEP_LINK",
-              "icon": "ic_notification",
-              "tag": "$NOTIFICATION_ID"
-            },
-            "data": {
-              "deeplink": "$DEEP_LINK",
-              "action": "open_spinwheel",
-              "notification_id": "$NOTIFICATION_ID",
-              "timestamp": "$TIMESTAMP",
-              "campaign": "daily_spin_$(date +%Y%m%d)",
-              "source": "github_action",
-              "fallback_url": "https://aviders.com/spin",
-              "priority": "high"
-            },
-            "android": {
-              "notification": {
-                "channel_id": "daily_spin_channel",
-                "priority": "high",
-                "default_sound": true,
-                "default_vibrate_timings": true
-              }
-            },
-            "apns": {
-              "payload": {
-                "aps": {
-                  "category": "DAILY_SPIN",
-                  "sound": "default",
-                  "badge": 1
-                }
-              }
-            }
-          }
-          EOF
-          
-          echo "payload_file=/tmp/notification_payload.json" >> $GITHUB_OUTPUT
-          echo "notification_id=$NOTIFICATION_ID" >> $GITHUB_OUTPUT
-          echo "Payload prepared with deep link: $DEEP_LINK"
-          
-      - name: Send notifications with deep link (runs at 14:00 UTC)
-        if: steps.schedule.outputs.TASK == 'notify' || github.event_name == 'workflow_dispatch'
+      - name: Run Reset (if ready)
+        if: steps.test_setup.outputs.ready == 'true'
         run: |
-          echo "📱 Sending FCM notifications with deep link..."
+          echo "🔄 Running daily spin reset..."
           
-          # Send to backend API (Option 1)
-          echo "Sending to backend API..."
-          BACKEND_RESPONSE=$(curl -s -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/run-notify \
+          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
-            -d @${{ steps.prepare_notify.outputs.payload_file }})
+            -d '{}' \
+            -w "\nHTTP Status: %{http_code}\n"
           
-          echo "Backend response: $BACKEND_RESPONSE"
-          
-          # Alternative: Direct FCM call (uncomment if backend doesn't support deep links)
-          # if [[ -z "$FCM_SERVER_KEY" ]]; then
-          #   echo "⚠️ No FCM key, skipping direct FCM"
-          # else
-          #   echo "Sending direct FCM notification..."
-          #   curl -X POST https://fcm.googleapis.com/fcm/send \
-          #     -H "Authorization: key=${{ secrets.FCM_SERVER_KEY }}" \
-          #     -H "Content-Type: application/json" \
-          #     -d @${{ steps.prepare_notify.outputs.payload_file }}
-          # fi
-          
-          echo "✅ Notifications sent with deep link: $DEEP_LINK"
-          
-      - name: Test deep link functionality (optional)
-        if: always() && steps.prepare_notify.outcome == 'success'
-        run: |
-          echo "🧪 Testing deep link configuration..."
-          echo "Deep Link: $DEEP_LINK"
-          echo "Test command for Android:"
-          echo "  adb shell am start -W -a android.intent.action.VIEW -d \"$DEEP_LINK\" com.aviders.app"
-          echo "Test command for iOS:"
-          echo "  xcrun simctl openurl booted \"$DEEP_LINK\""
-          echo ""
-          echo "For tracking, you can add UTM parameters:"
-          echo "  ${DEEP_LINK}?utm_source=github_action&utm_medium=notification&utm_campaign=${{ steps.schedule.outputs.TASK_NAME }}"
-          
-      - name: Log completion with details
-        run: |
-          echo "✅ GitHub Action completed successfully at $(date -u)"
-          echo "Task performed: ${{ steps.schedule.outputs.TASK }}"
-          echo "Task name: ${{ steps.schedule.outputs.TASK_NAME }}"
-          if [ "${{ steps.schedule.outputs.TASK }}" = "notify" ]; then
-            echo "Notification ID: ${{ steps.prepare_notify.outputs.notification_id }}"
-            echo "Deep link used: $DEEP_LINK"
-          fi
-          echo ""
-          echo "Next scheduled run:"
-          echo "- Daily reset: 00:00 UTC (5:30 AM IST)"
-          echo "- Notification: 14:00 UTC (7:30 PM IST)"
+          echo "✅ Reset completed!"
