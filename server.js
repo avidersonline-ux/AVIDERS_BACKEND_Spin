@@ -233,8 +233,8 @@ const userSchema = new mongoose.Schema({
   totalSpinsCount: { type: Number, default: 0 },
   dailyFreeSpinsCount: { type: Number, default: 0 },
   adBonusSpinsCount: { type: Number, default: 0 },
-  wonBonusSpinsCount: { type: Number, default: 0 }
-    // REFERRAL FIELDS
+  wonBonusSpinsCount: { type: Number, default: 0 },
+  // REFERRAL FIELDS
   referralCode: { type: String, unique: true },
   referredBy: { type: String, default: null },
   referralRewarded: { type: Boolean, default: false },
@@ -333,11 +333,11 @@ const ensureUser = async (uid) => {
         uid,
         freeSpins: 1,
         bonusSpins: 0,
-        walletCoins: 100
+        walletCoins: 100,
         referralCode: 'AVD' + uid.slice(-6)
       });
       await user.save();
-      console.log(`👤 New user CREATED in MongoDB: ${uid}`);
+      console.log(`👤 New user CREATED in MongoDB: ${uid} | Referral Code: ${user.referralCode}`);
     }
     
     return user;
@@ -380,12 +380,15 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
       free_spin_available: user.freeSpins > 0,
       bonus_spins: user.bonusSpins,
       wallet_coins: user.walletCoins,
+      referral_code: user.referralCode,
+      referred_by: user.referredBy || null,
       rewards: frontendRewards,
       statistics: {
         totalSpins: user.totalSpinsCount || 0,
         dailyFreeSpins: user.dailyFreeSpinsCount || 0,
         adBonusSpins: user.adBonusSpinsCount || 0,
-        wonBonusSpins: user.wonBonusSpinsCount || 0
+        wonBonusSpins: user.wonBonusSpinsCount || 0,
+        referralEarnings: user.referralEarnings || 0
       }
     });
   } catch (error) {
@@ -603,6 +606,9 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
         freeSpins: user.freeSpins,
         bonusSpins: user.bonusSpins,
         walletCoins: user.walletCoins,
+        referralCode: user.referralCode,
+        referredBy: user.referredBy,
+        referralEarnings: user.referralEarnings,
         createdAt: user.createdAt
       },
       history: formattedHistory,
@@ -611,6 +617,109 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
   } catch (error) {
     console.error('❌ Ledger error:', error);
     res.status(500).json({ success: false, message: "Server error: " + error.message });
+  }
+});
+
+// REFERRAL ENDPOINT - Apply referral code
+app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
+  try {
+    const { uid, referralCode } = req.body;
+    
+    console.log(`🤝 REFERRAL application: User ${uid} using code ${referralCode}`);
+    
+    // Ensure new user exists
+    const newUser = await ensureUser(uid);
+    
+    // Check if user already used a referral
+    if (newUser.referredBy) {
+      return res.json({ 
+        success: false, 
+        message: "User has already been referred" 
+      });
+    }
+    
+    // Check if user is trying to self-refer
+    if (newUser.referralCode === referralCode) {
+      return res.json({ 
+        success: false, 
+        message: "Cannot use your own referral code" 
+      });
+    }
+    
+    // Find referrer by referral code
+    const referrer = await User.findOne({ referralCode });
+    
+    if (!referrer) {
+      return res.json({ 
+        success: false, 
+        message: "Invalid referral code" 
+      });
+    }
+    
+    // Check if referrer is the same as new user (shouldn't happen but double-check)
+    if (referrer.uid === uid) {
+      return res.json({ 
+        success: false, 
+        message: "Cannot refer yourself" 
+      });
+    }
+    
+    // ✅ UPDATE REFERRER (give 100 coins)
+    referrer.walletCoins += 100;
+    referrer.referralEarnings += 100;
+    await referrer.save();
+    
+    // ✅ UPDATE NEW USER (mark as referred)
+    newUser.referredBy = referrer.uid;
+    newUser.referralRewarded = true;
+    await newUser.save();
+    
+    // ✅ CREATE SPIN HISTORY ENTRY FOR REFERRER
+    const spinHistory = new SpinHistory({
+      uid: referrer.uid,
+      email: referrer.email || '',
+      spinSource: "referral",
+      sector: -1, // Not applicable for referral
+      rewardType: "coins",
+      rewardValue: 100,
+      rewardLabel: "Referral Bonus",
+      coinsEarned: 100,
+      walletAfter: referrer.walletCoins
+    });
+    await spinHistory.save();
+    
+    console.log(`✅ Referral SUCCESS: ${uid} referred by ${referrer.uid}`);
+    console.log(`   💰 ${referrer.uid} received 100 AVD coins (Total: ${referrer.walletCoins})`);
+    
+    res.json({
+      success: true,
+      message: "Referral applied successfully! 100 AVD coins credited to referrer",
+      referrer: {
+        uid: referrer.uid,
+        walletCoins: referrer.walletCoins,
+        referralEarnings: referrer.referralEarnings
+      },
+      newUser: {
+        uid: newUser.uid,
+        referredBy: newUser.referredBy
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Referral apply error:', error);
+    
+    // Handle duplicate key error (shouldn't happen with our logic)
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Referral already processed for this user" 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
   }
 });
 
