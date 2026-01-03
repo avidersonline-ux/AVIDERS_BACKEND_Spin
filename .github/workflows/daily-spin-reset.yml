@@ -11,50 +11,97 @@ jobs:
 
     steps:
       # -------------------------
+      # 0️⃣ Wake Up Backend (if on free tier)
+      # -------------------------
+      - name: Wake Up Backend
+        run: |
+          echo "🌅 Waking up backend (Render free tier sleeps)..."
+          curl -s -o /dev/null -w "Wake-up status: %{http_code}\n" \
+            https://aviders-backend-spin-1.onrender.com
+          echo "Waiting 10 seconds for backend to start..."
+          sleep 10
+
+      # -------------------------
       # 1️⃣ Validate Secret & Backend
       # -------------------------
       - name: Validate Secret and Backend
-        id: validate
         run: |
           echo "🔐 Checking SPIN_INTERNAL_KEY..."
-
           if [ -z "${{ secrets.SPIN_INTERNAL_KEY }}" ]; then
             echo "❌ SPIN_INTERNAL_KEY not set"
             exit 1
           fi
-
           echo "✅ Secret found"
 
-          echo "🌍 Testing backend health..."
-          curl -s -o /dev/null -w "Health status: %{http_code}\n" \
-            https://aviders-backend-spin-1.onrender.com
-
       # -------------------------
-      # 2️⃣ Reset Daily Free Spins
+      # 2️⃣ Reset Daily Free Spins (WITH RETRY)
       # -------------------------
       - name: Reset Daily Free Spins
+        id: reset-spins
         run: |
           echo "🔄 Resetting daily free spins..."
-
-          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
+          
+          # Use curl with retry for cold-start protection
+          HTTP_STATUS=$(curl --retry 3 --retry-delay 5 --retry-max-time 30 \
+            -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
             -d '{}' \
-            -w "\nHTTP Status: %{http_code}\n"
-
-          echo "✅ Daily spin reset completed"
+            -w "%{http_code}" \
+            -o /tmp/response.txt)
+          
+          RESPONSE=$(cat /tmp/response.txt)
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response: $RESPONSE"
+          
+          # Check if successful
+          if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "201" ]]; then
+            echo "✅ Daily spin reset completed successfully"
+            echo "reset_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Daily spin reset failed with status $HTTP_STATUS"
+            echo "reset_success=false" >> $GITHUB_OUTPUT
+            exit 1  # Fail this step if reset doesn't work
+          fi
 
       # -------------------------
-      # 3️⃣ Send FCM Notifications
+      # 3️⃣ Send FCM Notifications (WITH RETRY, ONLY IF RESET SUCCEEDED)
       # -------------------------
       - name: Send FCM Notifications
+        if: steps.reset-spins.outputs.reset_success == 'true'
         run: |
           echo "📣 Sending FCM notifications..."
-
-          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/run-notify \
+          
+          # Use curl with retry for cold-start protection
+          HTTP_STATUS=$(curl --retry 3 --retry-delay 5 --retry-max-time 30 \
+            -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/run-notify \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
             -d '{}' \
-            -w "\nHTTP Status: %{http_code}\n"
+            -w "%{http_code}" \
+            -o /tmp/notify_response.txt)
+          
+          RESPONSE=$(cat /tmp/notify_response.txt)
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response: $RESPONSE"
+          
+          if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "201" ]]; then
+            echo "✅ Notifications triggered successfully"
+          else
+            echo "⚠️ Notifications failed with status $HTTP_STATUS (but reset was successful)"
+            # Don't fail the entire workflow if notifications fail
+          fi
 
-          echo "✅ Notifications triggered"
+      # -------------------------
+      # 4️⃣ Final Status Report
+      # -------------------------
+      - name: Final Status
+        run: |
+          echo "========================================"
+          echo "📊 DAILY SPIN TASK COMPLETE"
+          echo "========================================"
+          echo "✅ Spin Reset: ${{ steps.reset-spins.outputs.reset_success || 'unknown' }}"
+          echo "📱 Notifications: ${{ job.status == 'success' && 'Triggered' || 'Skipped (reset failed)' }}"
+          echo ""
+          echo "🕐 Next run: 00:30 UTC (06:00 IST) tomorrow"
+          echo "========================================"
