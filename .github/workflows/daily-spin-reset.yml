@@ -1,140 +1,60 @@
-name: Daily Spin Tasks - Debug Version
+name: Daily Spin Tasks (Reset + Notify)
 
 on:
-  workflow_dispatch:  # Only manual triggers until we fix it
+  workflow_dispatch:   # manual trigger
+  schedule:
+    - cron: "30 0 * * *"   # runs daily at 00:30 UTC (~06:00 IST)
 
 jobs:
-  debug-spin-tasks:
+  daily-spin-tasks:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Test Secret and Backend
-        id: test_setup
+      # -------------------------
+      # 1️⃣ Validate Secret & Backend
+      # -------------------------
+      - name: Validate Secret and Backend
+        id: validate
         run: |
-          echo "🔐 Testing configuration..."
-          
-          # Check if secret is set
+          echo "🔐 Checking SPIN_INTERNAL_KEY..."
+
           if [ -z "${{ secrets.SPIN_INTERNAL_KEY }}" ]; then
-            echo "❌ ERROR: SPIN_INTERNAL_KEY is empty or not set!"
-            echo "Go to: Settings → Secrets → Actions → Update SPIN_INTERNAL_KEY"
+            echo "❌ SPIN_INTERNAL_KEY not set"
             exit 1
-          else
-            echo "✅ Secret is set (length: ${#SPIN_INTERNAL_KEY} chars)"
-            
-            # Show first 5 chars for verification (not the whole key)
-            KEY_PREVIEW="${SPIN_INTERNAL_KEY:0:5}..."
-            KEY_LENGTH=${#SPIN_INTERNAL_KEY}
-            echo "Key preview: $KEY_PREVIEW (total: $KEY_LENGTH chars)"
           fi
-          
-          # Test backend with the actual key
-          echo "🔍 Testing backend connection with secret..."
-          BACKEND_URL="https://aviders-backend-spin-1.onrender.com"
-          
-          # Make a simple test call
-          TEST_RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X POST "$BACKEND_URL/api/spin/admin/reset-daily" \
-            -H "Content-Type: application/json" \
-            -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
-            -d '{}')
-            
-          HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -n1)
-          RESPONSE_BODY=$(echo "$TEST_RESPONSE" | head -n -1)
-          
-          echo "Backend HTTP Status: $HTTP_CODE"
-          echo "Backend Response: $RESPONSE_BODY"
-          
-          if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" ]]; then
-            echo "✅ Backend connection SUCCESSFUL!"
-            echo "ready=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ Backend connection FAILED!"
-            echo "ready=false" >> $GITHUB_OUTPUT
-            echo "🔧 Troubleshooting tips:"
-            echo "1. Check if the key in GitHub matches your backend's expected key"
-            echo "2. Check backend logs for authentication errors"
-            echo "3. Verify backend is running (Render free tier sleeps after inactivity)"
-          fi
-      
-      - name: Wake Up Backend (if on free tier)
-        if: steps.test_setup.outputs.ready == 'false'
-        run: |
-          echo "⏰ Waking up Render backend (free tier sleeps after 15min)..."
-          
-          # First, try to access the root URL to wake it up
-          curl -s -o /dev/null -w "Wake-up status: %{http_code}\n" \
+
+          echo "✅ Secret found"
+
+          echo "🌍 Testing backend health..."
+          curl -s -o /dev/null -w "Health status: %{http_code}\n" \
             https://aviders-backend-spin-1.onrender.com
-          
-          echo "Waiting 15 seconds for backend to fully start..."
-          sleep 15
-          
-          echo "🔄 Retrying with authentication..."
-          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
-            -H "Content-Type: application/json" \
-            -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
-            -d '{}' \
-            --max-time 30
-      
-      - name: Fix Instructions
-        if: failure()
+
+      # -------------------------
+      # 2️⃣ Reset Daily Free Spins
+      # -------------------------
+      - name: Reset Daily Free Spins
         run: |
-          echo ""
-          echo "🔧 FIX INSTRUCTIONS 🔧"
-          echo "======================"
-          echo ""
-          echo "PROBLEM: 'Internal access denied' (403)"
-          echo ""
-          echo "SOLUTION 1: Update GitHub Secret"
-          echo "---------------------------------"
-          echo "1. Get the correct key from your backend:"
-          echo "   - Check backend environment variables"
-          echo "   - Look for: INTERNAL_API_KEY, SPIN_INTERNAL_KEY, or similar"
-          echo ""
-          echo "2. Update GitHub:"
-          echo "   - Go to: https://github.com/YOUR_USER/YOUR_REPO/settings/secrets/actions"
-          echo "   - Click 'Update' next to SPIN_INTERNAL_KEY"
-          echo "   - Paste the EXACT key (check for spaces, case sensitivity)"
-          echo ""
-          echo "SOLUTION 2: Check Backend Code"
-          echo "------------------------------"
-          echo "Your backend code should have something like:"
-          echo ""
-          echo "  const internalKey = req.headers['x-internal-key'];"
-          echo "  const expectedKey = process.env.SPIN_INTERNAL_KEY;"
-          echo "  "
-          echo "  if (internalKey !== expectedKey) {"
-          echo "    return res.status(403).json({"
-          echo "      success: false,"
-          echo "      message: 'Internal access denied'"
-          echo "    });"
-          echo "  }"
-          echo ""
-          echo "SOLUTION 3: Test Manually"
-          echo "-------------------------"
-          echo "Run this command with the correct key:"
-          echo ""
-          echo "  curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \\"
-          echo "    -H \"Content-Type: application/json\" \\"
-          echo "    -H \"x-internal-key: YOUR_CORRECT_KEY_HERE\" \\"
-          echo "    -d '{}'"
-          echo ""
-          echo "SOLUTION 4: Temporarily Bypass (for testing)"
-          echo "-------------------------------------------"
-          echo "In your backend code, temporarily add debug logging:"
-          echo ""
-          echo "  console.log('Received key:', internalKey);"
-          echo "  console.log('Expected key:', expectedKey);"
-          echo "  console.log('Match?:', internalKey === expectedKey);"
-          
-      - name: Run Reset (if ready)
-        if: steps.test_setup.outputs.ready == 'true'
-        run: |
-          echo "🔄 Running daily spin reset..."
-          
+          echo "🔄 Resetting daily free spins..."
+
           curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/reset-daily \
             -H "Content-Type: application/json" \
             -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
             -d '{}' \
             -w "\nHTTP Status: %{http_code}\n"
-          
-          echo "✅ Reset completed!"
+
+          echo "✅ Daily spin reset completed"
+
+      # -------------------------
+      # 3️⃣ Send FCM Notifications
+      # -------------------------
+      - name: Send FCM Notifications
+        run: |
+          echo "📣 Sending FCM notifications..."
+
+          curl -X POST https://aviders-backend-spin-1.onrender.com/api/spin/admin/run-notify \
+            -H "Content-Type: application/json" \
+            -H "x-internal-key: ${{ secrets.SPIN_INTERNAL_KEY }}" \
+            -d '{}' \
+            -w "\nHTTP Status: %{http_code}\n"
+
+          echo "✅ Notifications triggered"
