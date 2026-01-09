@@ -103,8 +103,9 @@ app.use(express.json());
 const validateReferralRequest = (req, res, next) => {
   const schema = Joi.object({
     uid: Joi.string().min(5).max(100).required(),
-    referralCode: Joi.string().pattern(/^AVD\d{6}$/).required().messages({
-      'string.pattern.base': 'Referral code must be in format AVD followed by 6 digits (e.g., AVD123456)'
+    // UPDATED: Allow alphanumeric codes (A-Z, 0-9) to match Flutter logic
+    referralCode: Joi.string().pattern(/^AVD[A-Z0-9]{6}$/i).required().messages({
+      'string.pattern.base': 'Referral code must be in format AVD followed by 6 alphanumeric characters (e.g., AVD1A2B3C)'
     })
   });
 
@@ -329,12 +330,17 @@ const ensureUser = async (uid) => {
     let user = await User.findOne({ uid });
     
     if (!user) {
+      // UPDATED: Generate alphanumeric referral code to match Flutter logic
+      const cleanUid = uid.replaceAll('-', '').toUpperCase();
+      const suffix = cleanUid.length > 6 ? cleanUid.slice(-6) : cleanUid;
+      const genCode = `AVD${suffix}`;
+
       user = new User({
         uid,
         freeSpins: 1,
         bonusSpins: 0,
         walletCoins: 100,
-        referralCode: 'AVD' + uid.slice(-6)
+        referralCode: genCode
       });
       await user.save();
       console.log(`👤 New user CREATED in MongoDB: ${uid} | Referral Code: ${user.referralCode}`);
@@ -625,7 +631,10 @@ app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
   try {
     const { uid, referralCode } = req.body;
     
-    console.log(`🤝 REFERRAL application: User ${uid} using code ${referralCode}`);
+    // Standardize code for search
+    const codeToSearch = referralCode.trim().toUpperCase();
+    
+    console.log(`🤝 REFERRAL application: User ${uid} using code ${codeToSearch}`);
     
     // Ensure new user exists
     const newUser = await ensureUser(uid);
@@ -639,7 +648,7 @@ app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
     }
     
     // Check if user is trying to self-refer
-    if (newUser.referralCode === referralCode) {
+    if (newUser.referralCode === codeToSearch) {
       return res.json({ 
         success: false, 
         message: "Cannot use your own referral code" 
@@ -647,7 +656,7 @@ app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
     }
     
     // Find referrer by referral code
-    const referrer = await User.findOne({ referralCode });
+    const referrer = await User.findOne({ referralCode: codeToSearch });
     
     if (!referrer) {
       return res.json({ 
