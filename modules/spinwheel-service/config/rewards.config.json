@@ -14,9 +14,9 @@
     },
     {
       "type": "coins",
-      "value": 5,
+      "value": 50,
       "probability": 0.25,
-      "label": "5 AVD Coins"
+      "label": "50 AVD Coins"
     },
     {
       "type": "none",
