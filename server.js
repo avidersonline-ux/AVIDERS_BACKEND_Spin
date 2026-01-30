@@ -63,7 +63,7 @@ try {
 
 const app = express();
 
-// FIX 1: Add trust proxy for Render
+// Trust proxy for Render/Railway/Heroku
 app.set('trust proxy', 1);
 
 // =====================
@@ -77,37 +77,62 @@ app.use(helmet());
 app.use(compression());
 
 // 3. CORS - Configure allowed origins
+// Hybrid approach: Allow specific origins + mobile app compatibility
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:3000', 'http://localhost:5000']; // Add your production domains
+  : ['http://localhost:3000', 'http://localhost:5000'];
 
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      console.log(`🚫 CORS blocked: ${origin}`);
-      return callback(new Error(msg), false);
+    // Allow all origins during development, restrict in production
+    if (process.env.NODE_ENV === 'production' && allowedOrigins.length > 0) {
+      if (allowedOrigins.indexOf(origin) === -1) {
+        const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+        console.log(`🚫 CORS blocked: ${origin}`);
+        return callback(new Error(msg), false);
+      }
     }
     return callback(null, true);
   },
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: false
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+// =====================
+// INPUT VALIDATION SCHEMAS
+// =====================
 
 // Referral validation schema
 const validateReferralRequest = (req, res, next) => {
   const schema = Joi.object({
-    uid: Joi.string().min(5).max(100).required(),
-    // UPDATED: Allow alphanumeric codes (A-Z, 0-9) to match Flutter logic
-    referralCode: Joi.string().pattern(/^AVD[A-Z0-9]{6}$/i).required().messages({
-      'string.pattern.base': 'Referral code must be in format AVD followed by 6 alphanumeric characters (e.g., AVD1A2B3C)'
+    uid: Joi.string().min(1).max(100).required(),
+    referralCode: Joi.string().pattern(/^AVD[A-Z0-9]{1,20}$/i).required().messages({
+      'string.pattern.base': 'Referral code must start with AVD followed by alphanumeric characters'
     })
   });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ 
+      success: false, 
+      message: error.details[0].message 
+    });
+  }
+  next();
+};
+
+// Spin request validation
+const validateSpinRequest = (req, res, next) => {
+  const schema = Joi.object({
+    uid: Joi.string().min(1).max(100).required(),
+    email: Joi.string().email().optional().allow(''),
+    token: Joi.string().optional().allow('')
+  }).unknown(true);
 
   const { error } = schema.validate(req.body);
   if (error) {
@@ -136,7 +161,7 @@ const spinLimiter = rateLimit({
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 200, // Increased limit for general API
   message: { 
     success: false, 
     message: "Too many requests, please try again later" 
@@ -148,37 +173,19 @@ app.use("/api/spin/spin", spinLimiter);
 app.use("/api/", apiLimiter);
 
 // =====================
-// INPUT VALIDATION
-// =====================
-
-const validateSpinRequest = (req, res, next) => {
-  const schema = Joi.object({
-    uid: Joi.string().min(5).max(100).required(),
-    email: Joi.string().email().optional().allow(''),
-    token: Joi.string().optional().allow('')
-  }).unknown(true);
-
-  const { error } = schema.validate(req.body);
-  if (error) {
-    return res.status(400).json({ 
-      success: false, 
-      message: error.details[0].message 
-    });
-  }
-  next();
-};
-
-// =====================
 // REWARDS CONFIGURATION
 // =====================
 
 let rewardsConfig = [];
 try {
   const configPath = path.join(__dirname, 'modules', 'spinwheel-service', 'config', 'rewards.config.json');
-  const configData = fs.readFileSync(configPath, 'utf8');
-  rewardsConfig = JSON.parse(configData).rewards;
-  console.log("✅ Rewards configuration loaded successfully");
-  console.log(`📊 Loaded ${rewardsConfig.length} rewards from config`);
+  if (fs.existsSync(configPath)) {
+    const configData = fs.readFileSync(configPath, 'utf8');
+    rewardsConfig = JSON.parse(configData).rewards;
+    console.log(`✅ Rewards configuration loaded: ${rewardsConfig.length} rewards`);
+  } else {
+    throw new Error("Rewards config file missing");
+  }
 } catch (error) {
   console.error("❌ Failed to load rewards config, using fallback rewards:", error.message);
   // Fallback rewards
@@ -188,7 +195,7 @@ try {
     { type: "coins", value: 5, probability: 0.4, label: "5 AVD Coins" },
     { type: "none", value: 0, probability: 0.05, label: "Try Again" },
     { type: "coins", value: 15, probability: 0.25, label: "15 AVD Coins" },
-    { type: "coupon", code: "SPIN10", probability: 0.1, label: "Discount Coupon" },
+    { type: "bonus_spin", value: 1, probability: 0.1, label: "Extra Spin" },
     { type: "coins", value: 25, probability: 0.15, label: "25 AVD Coins" },
     { type: "none", value: 0, probability: 0.05, label: "Better Luck" }
   ];
@@ -204,16 +211,16 @@ if (!MONGODB_URI) {
   console.error("❌ MONGO_URI_SPIN environment variable is not set");
   console.log("🔄 Using in-memory storage only - data will not persist");
 } else {
-  console.log("🔗 Attempting MongoDB connection with MONGO_URI_SPIN...");
-  mongoose.connect(MONGODB_URI)
+  console.log("🔗 Attempting MongoDB connection...");
+  mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+  })
   .then(() => {
     console.log("✅ MongoDB Connected - Data will be saved permanently");
-    console.log(`📊 Database: ${mongoose.connection.db.databaseName}`);
-    console.log(`🏷️ Cluster: AVIDERS-SPIN-WIN`);
   })
   .catch(err => {
     console.error("❌ MongoDB connection failed:", err.message);
-    console.log("🔄 Using in-memory storage as fallback");
   });
 }
 
@@ -240,13 +247,19 @@ const userSchema = new mongoose.Schema({
   referredBy: { type: String, default: null },
   referralRewarded: { type: Boolean, default: false },
   referralEarnings: { type: Number, default: 0 }
+}, {
+  timestamps: true
 });
 
 const spinHistorySchema = new mongoose.Schema({
   uid: { type: String, required: true },
   email: { type: String, default: "" },
-  spinSource: { type: String, required: true, enum: ['daily_free', 'ad_rewarded', 'bonus', 'regular', 'referral'] },
-  sector: { type: Number, required: true },
+  spinSource: { 
+    type: String, 
+    required: true, 
+    enum: ['daily_free', 'ad_rewarded', 'bonus', 'regular', 'referral'] 
+  },
+  sector: { type: Number, default: -1 },
   rewardType: { type: String, required: true },
   rewardValue: { type: Number, default: 0 },
   rewardLabel: { type: String, required: true },
@@ -258,6 +271,11 @@ const spinHistorySchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Create indexes for better performance
+userSchema.index({ uid: 1 });
+userSchema.index({ referralCode: 1 });
+spinHistorySchema.index({ uid: 1, timestamp: -1 });
+
 // MongoDB Models
 const User = mongoose.model('User', userSchema);
 const SpinHistory = mongoose.model('SpinHistory', spinHistorySchema);
@@ -267,7 +285,7 @@ const SpinHistory = mongoose.model('SpinHistory', spinHistorySchema);
 // =====================
 
 app.use((req, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`, req.body || '');
+  console.log(`📨 ${req.method} ${req.path}`, req.body?.uid ? `UID: ${req.body.uid}` : '');
   next();
 });
 
@@ -275,54 +293,62 @@ app.use((req, res, next) => {
 // API ENDPOINTS
 // =====================
 
-// FIX 2: Add root route
+// Root endpoint
 app.get("/", (req, res) => {
   res.json({
     success: true,
     message: "🎰 AVIDERS Spin Wheel API Server",
-    version: "2.0.0",
+    version: "2.5.0",
     endpoints: {
       health: "/health",
       spin_status: "/api/spin/status",
       spin: "/api/spin/spin",
+      bonus: "/api/spin/bonus",
+      ledger: "/api/spin/ledger",
       referral_apply: "/api/referral/apply",
+      register_token: "/api/spin/register-token",
+      reset: "/api/spin/reset",
       admin_reset: "/api/spin/admin/reset-daily",
       admin_notify: "/api/spin/admin/run-notify",
       admin_users: "/api/spin/admin/users"
-    },
-    documentation: "All API endpoints require POST with JSON body except /health and /"
-  });
-});
-
-// Health check with DB status
-app.get("/health", async (req, res) => {
-  const dbStatus = mongoose.connection.readyState === 1 ? "Connected" : "Disconnected";
-  
-  // Get some stats
-  const userCount = await User.countDocuments().catch(() => 0);
-  const spinCount = await SpinHistory.countDocuments().catch(() => 0);
-  
-  res.json({ 
-    success: true, 
-    message: "Server is running", 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    database: dbStatus,
-    stats: {
-      total_users: userCount,
-      total_spins: spinCount
-    },
-    rewards_config: {
-      loaded: rewardsConfig.length,
-      rewards: rewardsConfig.map(r => ({ type: r.type, label: r.label }))
-    },
-    security: {
-      cors_enabled: true,
-      rate_limiting: true,
-      compression: true
     }
   });
 });
+
+// Health check endpoint
+app.get("/health", async (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? "Connected" : "Disconnected";
+  
+  try {
+    const userCount = await User.countDocuments().catch(() => 0);
+    const spinCount = await SpinHistory.countDocuments().catch(() => 0);
+    
+    res.json({ 
+      success: true, 
+      message: "Server is running",
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      database: dbStatus,
+      stats: {
+        total_users: userCount,
+        total_spins: spinCount
+      },
+      rewards_config: {
+        loaded: rewardsConfig.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: "Health check failed", 
+      error: error.message 
+    });
+  }
+});
+
+// =====================
+// HELPER FUNCTIONS
+// =====================
 
 // Ensure user exists in MongoDB
 const ensureUser = async (uid) => {
@@ -330,8 +356,8 @@ const ensureUser = async (uid) => {
     let user = await User.findOne({ uid });
     
     if (!user) {
-      // UPDATED: Generate alphanumeric referral code to match Flutter logic
-      const cleanUid = uid.replaceAll('-', '').toUpperCase();
+      // Generate alphanumeric referral code
+      const cleanUid = uid.toString().replaceAll('-', '').toUpperCase();
       const suffix = cleanUid.length > 6 ? cleanUid.slice(-6) : cleanUid;
       const genCode = `AVD${suffix}`;
 
@@ -343,7 +369,7 @@ const ensureUser = async (uid) => {
         referralCode: genCode
       });
       await user.save();
-      console.log(`👤 New user CREATED in MongoDB: ${uid} | Referral Code: ${user.referralCode}`);
+      console.log(`👤 New user created: ${uid} | Referral Code: ${user.referralCode}`);
     }
     
     return user;
@@ -353,19 +379,17 @@ const ensureUser = async (uid) => {
   }
 };
 
+// =====================
 // SPIN API ENDPOINTS
+// =====================
+
+// Get user status and available spins
 app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
-    console.log(`🔎 STATUS requested for UID: ${uid}`);
-    
-    if (!uid) {
-      return res.status(400).json({ success: false, message: "UID is required" });
-    }
-
     const user = await ensureUser(uid);
     
-    // Persist email if client sent it
+    // Update email if provided
     if (req.body?.email) {
       if (!user.email || user.email !== req.body.email) {
         user.email = req.body.email;
@@ -373,7 +397,7 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
       }
     }
     
-    // Use rewards from config (remove probability field for frontend)
+    // Prepare rewards for frontend (without probability)
     const frontendRewards = rewardsConfig.map(reward => ({
       type: reward.type,
       value: reward.value,
@@ -399,25 +423,21 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Status error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
   }
 });
 
+// Add bonus spin
 app.post("/api/spin/bonus", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
-    console.log(`➕ BONUS requested for UID: ${uid}`);
-    
-    if (!uid) {
-      return res.status(400).json({ success: false, message: "UID is required" });
-    }
-
     const user = await ensureUser(uid);
     user.bonusSpins += 1;
     await user.save();
 
-    console.log(`✅ Bonus spin ADDED to MongoDB for ${uid}. Total: ${user.bonusSpins}`);
-    
     res.json({
       success: true,
       bonus_spins: user.bonusSpins,
@@ -425,88 +445,76 @@ app.post("/api/spin/bonus", validateSpinRequest, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Bonus spin error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
   }
 });
 
+// Register FCM token
 app.post("/api/spin/register-token", validateSpinRequest, async (req, res) => {
   try {
     const { uid, token } = req.body;
-    console.log(`📱 FCM TOKEN registration for UID: ${uid}`);
-    
-    if (!uid) {
-      return res.status(400).json({ success: false, message: "UID is required" });
-    }
-    
     if (!token) {
-      return res.status(400).json({ success: false, message: "Token is required" });
+      return res.status(400).json({ 
+        success: false, 
+        message: "Token is required" 
+      });
     }
 
-    // Ensure user exists
     await ensureUser(uid);
-    
-    // Save token using $addToSet to avoid duplicates
     await User.updateOne(
       { uid },
       { $addToSet: { fcm_tokens: token } }
     );
 
-    console.log(`✅ FCM token registered for ${uid}`);
-    
-    res.json({
-      success: true,
-      message: "Token registered"
+    res.json({ 
+      success: true, 
+      message: "Token registered successfully" 
     });
   } catch (error) {
     console.error('❌ Register token error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 });
 
+// Perform a spin
 app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
-    console.log(`🎰 SPIN requested for UID: ${uid}`);
-    
-    if (!uid) {
-      return res.status(400).json({ success: false, message: "UID is required" });
-    }
-
     const user = await ensureUser(uid);
     
-    // Persist email if client sent it
-    if (req.body?.email) {
-      if (!user.email || user.email !== req.body.email) {
-        user.email = req.body.email;
-        await user.save();
-      }
-    }
-    
-    // Check if user has spins
+    // Check if user has spins available
     if (user.freeSpins <= 0 && user.bonusSpins <= 0) {
-      return res.json({ success: false, message: "No spins available" });
+      return res.json({ 
+        success: false, 
+        message: "No spins available. Watch an ad or wait for tomorrow's free spin." 
+      });
     }
 
     // Determine spin source and deduct
     let spinSource = 'regular';
-    
     if (user.freeSpins > 0) {
       user.freeSpins -= 1;
       spinSource = 'daily_free';
-      user.dailyFreeSpinsCount += 1;  // ✅ Increment daily free counter
+      user.dailyFreeSpinsCount += 1;
     } else if (user.bonusSpins > 0) {
       user.bonusSpins -= 1;
       spinSource = 'ad_rewarded';
-      user.adBonusSpinsCount += 1;  // ✅ Increment ad bonus counter
+      user.adBonusSpinsCount += 1;
     }
 
-    user.totalSpinsCount += 1;  // ✅ Increment total spin counter
+    user.totalSpinsCount += 1;
     user.lastSpin = new Date();
 
-    // ✅ USE REWARDS FROM CONFIG FILE with probability-based selection
+    // Probability-based reward selection
     const randomValue = Math.random();
     let cumulativeProbability = 0;
-    let selectedReward = rewardsConfig[0]; // fallback
+    let selectedReward = rewardsConfig[0];
     
     for (const reward of rewardsConfig) {
       cumulativeProbability += reward.probability;
@@ -516,259 +524,202 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
       }
     }
 
-    // Add sector index for frontend
     const rewardIndex = rewardsConfig.findIndex(r => r === selectedReward);
-    const reward = {
-      ...selectedReward,
-      sector: rewardIndex
-    };
     
-    // Update wallet if coins reward
-    if (reward.type === "coins") {
-      user.walletCoins += reward.value;
-    }
-    
-    // Update bonus spins if bonus_spin reward
-    if (reward.type === "bonus_spin") {
-      user.bonusSpins += reward.value;
-      user.wonBonusSpinsCount += reward.value;  // ✅ Increment won spins counter
+    // Apply reward
+    if (selectedReward.type === "coins") {
+      user.walletCoins += selectedReward.value;
+    } else if (selectedReward.type === "bonus_spin") {
+      user.bonusSpins += selectedReward.value;
+      user.wonBonusSpinsCount += selectedReward.value;
     }
 
-    // ✅ SAVE USER DATA TO MONGODB
     await user.save();
 
-    // ✅ SAVE SPIN HISTORY TO MONGODB with spinSource
-    const coinsEarned = reward.type === 'coins' ? reward.value : 0;
-    
+    // Save spin history
     const spinHistory = new SpinHistory({
       uid: uid,
       email: user.email || '',
       spinSource: spinSource,
-      sector: reward.sector,
-      rewardType: reward.type,
-      rewardValue: reward.value || 0,
-      rewardLabel: reward.label,
-      rewardCode: reward.code || null,
-      coinsEarned: coinsEarned,
+      sector: rewardIndex,
+      rewardType: selectedReward.type,
+      rewardValue: selectedReward.value || 0,
+      rewardLabel: selectedReward.label,
+      rewardCode: selectedReward.code || null,
+      coinsEarned: selectedReward.type === 'coins' ? selectedReward.value : 0,
       walletAfter: user.walletCoins
     });
     await spinHistory.save();
-
-    console.log(`✅ Spin COMPLETED and SAVED to MongoDB for ${uid}. Reward: ${reward.label}, AVD Coins: ${user.walletCoins}`);
+    
+    console.log(`🎰 Spin completed for ${uid}: ${selectedReward.label}`);
     
     res.json({
       success: true,
-      sector: reward.sector,
-      reward: reward,
+      sector: rewardIndex,
+      reward: selectedReward,
       free_spin_available: user.freeSpins > 0,
       bonus_spins: user.bonusSpins,
       wallet_coins: user.walletCoins,
-      message: `You won: ${reward.label}`
+      message: `Congratulations! You won: ${selectedReward.label}`
     });
   } catch (error) {
     console.error('❌ Spin error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 });
 
-// LEDGER endpoint - Get user history from MongoDB
+// Get user ledger/history
 app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
-    
-    if (!uid) {
-      return res.status(400).json({ success: false, message: "UID is required" });
-    }
+    const user = await ensureUser(uid);
+    const history = await SpinHistory.find({ uid })
+      .sort({ timestamp: -1 })
+      .limit(50)
+      .lean();
 
-    const user = await User.findOne({ uid });
-    const spinHistoryDocs = await SpinHistory.find({ uid }).sort({ timestamp: -1 }).limit(50);
-
-    if (!user) {
-      return res.json({ success: false, message: "User not found" });
-    }
-
-    // Format history with correct field names for Flutter
-    const formattedHistory = spinHistoryDocs.map(doc => ({
-      _id: doc._id.toString(),
-      uid: doc.uid,
-      email: doc.email,
-      spinSource: doc.spinSource,
-      sector: doc.sector,
-      rewardType: doc.rewardType,
-      rewardValue: doc.rewardValue,
-      rewardLabel: doc.rewardLabel,
-      rewardCode: doc.rewardCode,
-      coinsEarned: doc.coinsEarned,
-      walletAfter: doc.walletAfter,
-      timestamp: doc.timestamp
-    }));
-
-    console.log(`📖 Ledger retrieved for ${uid}: ${formattedHistory.length} history entries`);
-
-    res.json({
-      success: true,
+    res.json({ 
+      success: true, 
       user: {
         uid: user.uid,
+        email: user.email,
         freeSpins: user.freeSpins,
         bonusSpins: user.bonusSpins,
         walletCoins: user.walletCoins,
         referralCode: user.referralCode,
         referredBy: user.referredBy,
-        referralEarnings: user.referralEarnings,
         createdAt: user.createdAt
       },
-      history: formattedHistory,
-      totalSpins: formattedHistory.length
+      history: history,
+      totalHistory: history.length
     });
   } catch (error) {
     console.error('❌ Ledger error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 });
 
-// REFERRAL ENDPOINT - Apply referral code
+// Apply referral code
 app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
   try {
     const { uid, referralCode } = req.body;
-    
-    // Standardize code for search
-    const codeToSearch = referralCode.trim().toUpperCase();
-    
-    console.log(`🤝 REFERRAL application: User ${uid} using code ${codeToSearch}`);
-    
-    // Ensure new user exists
+    const code = referralCode.trim().toUpperCase();
     const newUser = await ensureUser(uid);
-    
-    // Check if user already used a referral
+
+    // Validation checks
     if (newUser.referredBy) {
       return res.json({ 
         success: false, 
-        message: "User has already been referred" 
+        message: "You have already used a referral code" 
       });
     }
     
-    // Check if user is trying to self-refer
-    if (newUser.referralCode === codeToSearch) {
+    if (newUser.referralCode === code) {
       return res.json({ 
         success: false, 
-        message: "Cannot use your own referral code" 
+        message: "You cannot use your own referral code" 
       });
     }
-    
-    // Find referrer by referral code
-    const referrer = await User.findOne({ referralCode: codeToSearch });
-    
+
+    const referrer = await User.findOne({ referralCode: code });
     if (!referrer) {
       return res.json({ 
         success: false, 
         message: "Invalid referral code" 
       });
     }
-    
-    // Check if referrer is the same as new user (shouldn't happen but double-check)
-    if (referrer.uid === uid) {
-      return res.json({ 
-        success: false, 
-        message: "Cannot refer yourself" 
-      });
-    }
-    
-    // ✅ UPDATE REFERRER (give 100 coins)
+
+    // Apply referral rewards
     referrer.walletCoins += 100;
     referrer.referralEarnings += 100;
     await referrer.save();
     
-    // ✅ UPDATE NEW USER (mark as referred)
     newUser.referredBy = referrer.uid;
+    newUser.walletCoins += 50; // Welcome bonus for new user
     newUser.referralRewarded = true;
     await newUser.save();
     
-    // ✅ CREATE SPIN HISTORY ENTRY FOR REFERRER
-    const spinHistory = new SpinHistory({
+    // Create history entries
+    await SpinHistory.create({
       uid: referrer.uid,
       email: referrer.email || '',
       spinSource: "referral",
-      sector: -1, // Not applicable for referral
       rewardType: "coins",
       rewardValue: 100,
       rewardLabel: "Referral Bonus",
-      coinsEarned: 100,
       walletAfter: referrer.walletCoins
     });
-    await spinHistory.save();
-    
-    console.log(`✅ Referral SUCCESS: ${uid} referred by ${referrer.uid}`);
-    console.log(`   💰 ${referrer.uid} received 100 AVD coins (Total: ${referrer.walletCoins})`);
-    
-    res.json({
-      success: true,
-      message: "Referral applied successfully! 100 AVD coins credited to referrer",
-      referrer: {
-        uid: referrer.uid,
-        walletCoins: referrer.walletCoins,
-        referralEarnings: referrer.referralEarnings
-      },
-      newUser: {
-        uid: newUser.uid,
-        referredBy: newUser.referredBy
-      }
+
+    await SpinHistory.create({
+      uid: newUser.uid,
+      email: newUser.email || '',
+      spinSource: "referral",
+      rewardType: "coins",
+      rewardValue: 50,
+      rewardLabel: "Welcome Bonus",
+      walletAfter: newUser.walletCoins
     });
     
+    console.log(`🤝 Referral applied: ${uid} referred by ${referrer.uid}`);
+    
+    res.json({ 
+      success: true, 
+      message: "Referral applied successfully! Referrer received 100 coins, you received 50 coins.",
+      rewards: {
+        referrer: { coins: 100, total: referrer.walletCoins },
+        newUser: { coins: 50, total: newUser.walletCoins }
+      }
+    });
   } catch (error) {
-    console.error('❌ Referral apply error:', error);
-    
-    // Handle duplicate key error (shouldn't happen with our logic)
-    if (error.code === 11000) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Referral already processed for this user" 
-      });
-    }
-    
+    console.error('❌ Referral error:', error);
     res.status(500).json({ 
       success: false, 
-      message: "Server error: " + error.message 
+      message: error.message 
     });
   }
 });
 
-// RESET endpoint - Delete user data from MongoDB
+// Reset user data (for testing)
 app.post("/api/spin/reset", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
-    
-    if (!uid) {
-      return res.status(400).json({ success: false, message: "UID is required" });
-    }
-
-    // Delete user
     await User.deleteOne({ uid });
-    
-    // Delete user's spin history
     await SpinHistory.deleteMany({ uid });
-
-    console.log(`🔄 User data DELETED from MongoDB: ${uid}`);
-    
-    res.json({
-      success: true,
-      message: "User data reset successfully"
+    res.json({ 
+      success: true, 
+      message: "User data reset successfully" 
     });
   } catch (error) {
     console.error('❌ Reset error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 });
 
-// ADMIN endpoint - Get all users (for debugging)
+// =====================
+// ADMIN ENDPOINTS
+// =====================
+
+// Admin: Get all users (requires admin key)
 app.get("/api/spin/admin/users", async (req, res) => {
   try {
-    // Basic admin authentication (you should enhance this)
     const adminKey = req.headers['x-admin-key'];
     if (!adminKey || adminKey !== process.env.ADMIN_SECRET) {
-      return res.status(403).json({ success: false, message: "Admin access denied" });
+      return res.status(403).json({ 
+        success: false, 
+        message: "Admin access denied" 
+      });
     }
 
-    const users = await User.find().sort({ createdAt: -1 });
+    const users = await User.find().sort({ createdAt: -1 }).lean();
     const totalSpins = await SpinHistory.countDocuments();
     
     res.json({
@@ -779,24 +730,25 @@ app.get("/api/spin/admin/users", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Admin users error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
   }
 });
 
-// ADMIN endpoint - Reset daily free spins
+// Admin: Reset daily free spins
 app.post("/api/spin/admin/reset-daily", async (req, res) => {
   try {
-    // Internal authentication
     const internalKey = req.headers['x-internal-key'];
     if (!internalKey || internalKey !== process.env.SPIN_INTERNAL_KEY) {
-      return res.status(403).json({ success: false, message: "Internal access denied" });
+      return res.status(403).json({ 
+        success: false, 
+        message: "Internal access denied" 
+      });
     }
 
-    // Compute 24-hour cutoff
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    console.log(`🔄 Resetting daily spins for users inactive since: ${cutoff.toISOString()}`);
-
-    // Update users who haven't spun in 24h or never spun
     const result = await User.updateMany(
       {
         $or: [
@@ -809,57 +761,56 @@ app.post("/api/spin/admin/reset-daily", async (req, res) => {
       }
     );
 
-    console.log(`✅ Daily reset completed: ${result.modifiedCount} users updated`);
+    console.log(`🔄 Daily reset: ${result.modifiedCount} users updated`);
 
     res.json({
       success: true,
       message: "Daily free spins reset completed",
-      updated_count: result.modifiedCount,
-      matched_count: result.matchedCount
+      updated_count: result.modifiedCount
     });
   } catch (error) {
     console.error('❌ Reset daily error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
   }
 });
 
-// FIX 3: Updated ADMIN endpoint - Send FCM notifications (FIXED VERSION)
+// Admin: Send FCM notifications
 app.post("/api/spin/admin/run-notify", async (req, res) => {
   try {
-    // Internal authentication
     const internalKey = req.headers['x-internal-key'];
     if (!internalKey || internalKey !== process.env.SPIN_INTERNAL_KEY) {
-      return res.status(403).json({ success: false, message: "Internal access denied" });
+      return res.status(403).json({ 
+        success: false, 
+        message: "Internal access denied" 
+      });
     }
 
-    // Check if Firebase Admin is available
-    if (!admin) {
+    if (!admin || !firebaseInitialized) {
       return res.status(503).json({ 
         success: false, 
         message: "FCM not configured - Firebase Admin SDK not initialized" 
       });
     }
 
-    // Find users with free spins and FCM tokens
-    const users = await User.find({
-      freeSpins: { $gt: 0 },
-      fcm_tokens: { $exists: true, $not: { $size: 0 } }
+    const users = await User.find({ 
+      freeSpins: { $gt: 0 }, 
+      fcm_tokens: { $exists: true, $not: { $size: 0 } } 
     });
 
     console.log(`📱 Found ${users.length} users eligible for FCM notifications`);
 
     let notifiedCount = 0;
-    let totalSuccess = 0;
-    let totalFailure = 0;
-
-    // Send notifications to each user
     for (const user of users) {
       if (user.fcm_tokens && user.fcm_tokens.length > 0) {
         try {
+          // Send notification using Firebase Admin
           const message = {
             notification: {
               title: "🎰 Your Free Spin is Ready!",
-              body: "Come back and spin the wheel to win amazing rewards!",
+              body: "Spin the wheel now to win amazing rewards!",
             },
             tokens: user.fcm_tokens,
             data: {
@@ -869,93 +820,26 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
             }
           };
           
-          let resp;
-          
-          // Try different Firebase methods in order
-          if (typeof admin.messaging().sendEachForMulticast === 'function') {
-            // Firebase Admin SDK v12+
-            console.log(`🔧 Using sendEachForMulticast() for user: ${user.uid}`);
-            resp = await admin.messaging().sendEachForMulticast(message);
-          } else if (typeof admin.messaging().sendMulticast === 'function') {
-            // Firebase Admin SDK v11
-            console.log(`🔧 Using sendMulticast() for user: ${user.uid}`);
-            resp = await admin.messaging().sendMulticast(message);
-          } else {
-            // Fallback: Send individual messages
-            console.log(`🔧 Using individual send() for user: ${user.uid}`);
-            const promises = user.fcm_tokens.map(token => 
-              admin.messaging().send({
-                token: token,
-                notification: {
-                  title: "🎰 Your Free Spin is Ready!",
-                  body: "Come back and spin the wheel to win amazing rewards!",
-                },
-                data: {
-                  type: "daily_spin_reminder",
-                  screen: "spin_wheel",
-                  uid: user.uid
-                }
-              })
-            );
-            
-            const results = await Promise.allSettled(promises);
-            resp = {
-              successCount: results.filter(r => r.status === 'fulfilled').length,
-              failureCount: results.filter(r => r.status === 'rejected').length,
-              responses: results.map(r => ({
-                success: r.status === 'fulfilled',
-                error: r.status === 'rejected' ? r.reason : null
-              }))
-            };
-          }
-          
-          totalSuccess += resp.successCount;
-          totalFailure += resp.failureCount;
-          
-          if (resp.successCount > 0) {
-            notifiedCount++;
-          }
-          
-          // Clean up invalid tokens
-          if (resp.failureCount > 0 && resp.responses) {
-            const failedTokens = [];
-            resp.responses.forEach((response, idx) => {
-              if (!response.success) {
-                failedTokens.push(user.fcm_tokens[idx]);
-              }
-            });
-            
-            if (failedTokens.length > 0) {
-              await User.updateOne(
-                { uid: user.uid },
-                { $pull: { fcm_tokens: { $in: failedTokens } } }
-              );
-              console.log(`🧹 Cleaned ${failedTokens.length} invalid FCM tokens for user: ${user.uid}`);
-            }
-          }
-          
-          console.log(`✅ User ${user.uid}: ${resp.successCount} sent, ${resp.failureCount} failed`);
-          
+          await admin.messaging().sendEachForMulticast(message);
+          notifiedCount++;
         } catch (error) {
           console.error(`❌ Failed to notify user ${user.uid}:`, error.message);
-          totalFailure++;
         }
       }
     }
 
-    console.log(`📊 Notification summary: ${notifiedCount} users notified, ${totalSuccess} messages sent, ${totalFailure} messages failed`);
-
     res.json({
       success: true,
       message: "FCM notifications processed",
-      total_eligible: users.length,
       users_notified: notifiedCount,
-      messages_sent: totalSuccess,
-      messages_failed: totalFailure
+      total_eligible: users.length
     });
   } catch (error) {
     console.error('❌ Run notify error:', error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
   }
 });
 
@@ -976,15 +860,6 @@ app.use('*', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('🔥 Global Error Handler:', err);
   
-  // CORS error
-  if (err.message.includes('CORS')) {
-    return res.status(403).json({ 
-      success: false, 
-      message: "CORS policy violation" 
-    });
-  }
-  
-  // Rate limit error
   if (err.status === 429) {
     return res.status(429).json({ 
       success: false, 
@@ -1004,13 +879,18 @@ app.use((err, req, res, next) => {
 
 process.on('unhandledRejection', (err) => {
   console.error('❌ Unhandled Promise Rejection:', err);
-  // In production, you might want to restart the process
-  process.exit(1);
+  // Don't exit in production, just log
+  if (process.env.NODE_ENV === 'production') {
+    // Optionally send to error tracking service
+  }
 });
 
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
-  process.exit(1);
+  // Graceful shutdown in production
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
 });
 
 // =====================
@@ -1019,23 +899,28 @@ process.on('uncaughtException', (err) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Premium Spin Wheel Server running on port ${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`✅ CORS enabled for: ${allowedOrigins.join(', ')}`);
   console.log(`🎯 Rewards configuration: ${rewardsConfig.length} rewards loaded`);
   console.log(`🛡️ Security: Helmet, Rate Limiting, Compression enabled`);
-  console.log(`📱 FCM Admin Endpoints: /api/spin/admin/reset-daily, /api/spin/admin/run-notify`);
+  console.log(`📱 Firebase Admin: ${firebaseInitialized ? '✅ Initialized' : '❌ Disabled'}`);
   
-  // Better connection status check
-  const dbStatus = mongoose.connection.readyState === 1 ? "Connected" : "Disconnected";
+  const dbStatus = mongoose.connection.readyState === 1 ? "✅ Connected" : "❌ Disconnected";
   console.log(`💾 MongoDB: ${dbStatus}`);
-  console.log(`🏷️ Cluster: AVIDERS-SPIN-WIN`);
-  console.log(`🗃️ Database: spinwheelDb`);
-  console.log(`🔑 Using: ${process.env.MONGO_URI_SPIN ? 'MONGO_URI_SPIN' : process.env.MONGO_URI ? 'MONGO_URI' : 'No connection string'}`);
-  
-  // Security warnings
-  if (process.env.NODE_ENV === 'production' && allowedOrigins.includes('http://localhost:3000')) {
-    console.log(`⚠️  WARNING: Localhost is in allowed origins in production`);
-  }
 });
+
+// Graceful shutdown
+const gracefulShutdown = () => {
+  console.log('🔄 Received shutdown signal, closing server gracefully...');
+  server.close(() => {
+    console.log('🔒 HTTP server closed');
+    mongoose.connection.close(false, () => {
+      console.log('🔒 MongoDB connection closed');
+      process.exit(0);
+    });
+  });
+};
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
