@@ -78,15 +78,15 @@ app.use(compression());
 
 // 3. CORS - Configure allowed origins
 // Hybrid approach: Allow specific origins + mobile app compatibility
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',') 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
   : ['http://localhost:3000', 'http://localhost:5000'];
 
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     // Allow all origins during development, restrict in production
     if (process.env.NODE_ENV === 'production' && allowedOrigins.length > 0) {
       if (allowedOrigins.indexOf(origin) === -1) {
@@ -118,9 +118,9 @@ const validateReferralRequest = (req, res, next) => {
 
   const { error } = schema.validate(req.body);
   if (error) {
-    return res.status(400).json({ 
-      success: false, 
-      message: error.details[0].message 
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message
     });
   }
   next();
@@ -136,9 +136,9 @@ const validateSpinRequest = (req, res, next) => {
 
   const { error } = schema.validate(req.body);
   if (error) {
-    return res.status(400).json({ 
-      success: false, 
-      message: error.details[0].message 
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message
     });
   }
   next();
@@ -151,9 +151,9 @@ const validateSpinRequest = (req, res, next) => {
 const spinLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 50, // Limit each IP to 50 spin requests per windowMs
-  message: { 
-    success: false, 
-    message: "Too many spin attempts, please try again later" 
+  message: {
+    success: false,
+    message: "Too many spin attempts, please try again later"
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -162,9 +162,9 @@ const spinLimiter = rateLimit({
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 200, // Increased limit for general API
-  message: { 
-    success: false, 
-    message: "Too many requests, please try again later" 
+  message: {
+    success: false,
+    message: "Too many requests, please try again later"
   }
 });
 
@@ -242,11 +242,12 @@ const userSchema = new mongoose.Schema({
   dailyFreeSpinsCount: { type: Number, default: 0 },
   adBonusSpinsCount: { type: Number, default: 0 },
   wonBonusSpinsCount: { type: Number, default: 0 },
-  // REFERRAL FIELDS
+  // REFERRAL FIELDS - UPDATED WITH REFERRAL COUNT
   referralCode: { type: String, unique: true },
   referredBy: { type: String, default: null },
   referralRewarded: { type: Boolean, default: false },
-  referralEarnings: { type: Number, default: 0 }
+  referralCount: { type: Number, default: 0 },      // NEW: Count of successful referrals
+  referralEarnings: { type: Number, default: 0 }    // Existing: Total coins earned from referrals
 }, {
   timestamps: true
 });
@@ -254,10 +255,10 @@ const userSchema = new mongoose.Schema({
 const spinHistorySchema = new mongoose.Schema({
   uid: { type: String, required: true },
   email: { type: String, default: "" },
-  spinSource: { 
-    type: String, 
-    required: true, 
-    enum: ['daily_free', 'ad_rewarded', 'bonus', 'regular', 'referral'] 
+  spinSource: {
+    type: String,
+    required: true,
+    enum: ['daily_free', 'ad_rewarded', 'bonus', 'regular', 'referral']
   },
   sector: { type: Number, default: -1 },
   rewardType: { type: String, required: true },
@@ -274,6 +275,7 @@ const spinHistorySchema = new mongoose.Schema({
 // Create indexes for better performance
 userSchema.index({ uid: 1 });
 userSchema.index({ referralCode: 1 });
+userSchema.index({ referralCount: -1 }); // For finding top referrers
 spinHistorySchema.index({ uid: 1, timestamp: -1 });
 
 // MongoDB Models
@@ -298,7 +300,7 @@ app.get("/", (req, res) => {
   res.json({
     success: true,
     message: "🎰 AVIDERS Spin Wheel API Server",
-    version: "2.5.0",
+    version: "2.6.0",
     endpoints: {
       health: "/health",
       spin_status: "/api/spin/status",
@@ -310,7 +312,8 @@ app.get("/", (req, res) => {
       reset: "/api/spin/reset",
       admin_reset: "/api/spin/admin/reset-daily",
       admin_notify: "/api/spin/admin/run-notify",
-      admin_users: "/api/spin/admin/users"
+      admin_users: "/api/spin/admin/users",
+      admin_referral_stats: "/api/spin/admin/referral-stats" // NEW
     }
   });
 });
@@ -318,30 +321,44 @@ app.get("/", (req, res) => {
 // Health check endpoint
 app.get("/health", async (req, res) => {
   const dbStatus = mongoose.connection.readyState === 1 ? "Connected" : "Disconnected";
-  
+
   try {
     const userCount = await User.countDocuments().catch(() => 0);
     const spinCount = await SpinHistory.countDocuments().catch(() => 0);
     
-    res.json({ 
-      success: true, 
+    // Get referral stats
+    const referralStats = await User.aggregate([
+      { $group: {
+          _id: null,
+          totalReferrals: { $sum: "$referralCount" },
+          totalReferralEarnings: { $sum: "$referralEarnings" },
+          usersWithReferrals: { $sum: { $cond: [{ $gt: ["$referralCount", 0] }, 1, 0] } }
+        }
+      }
+    ]).catch(() => [{ totalReferrals: 0, totalReferralEarnings: 0, usersWithReferrals: 0 }]);
+
+    res.json({
+      success: true,
       message: "Server is running",
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
       database: dbStatus,
       stats: {
         total_users: userCount,
-        total_spins: spinCount
+        total_spins: spinCount,
+        total_referrals: referralStats[0]?.totalReferrals || 0,
+        total_referral_earnings: referralStats[0]?.totalReferralEarnings || 0,
+        users_with_referrals: referralStats[0]?.usersWithReferrals || 0
       },
       rewards_config: {
         loaded: rewardsConfig.length
       }
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: "Health check failed", 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: "Health check failed",
+      error: error.message
     });
   }
 });
@@ -354,7 +371,7 @@ app.get("/health", async (req, res) => {
 const ensureUser = async (uid) => {
   try {
     let user = await User.findOne({ uid });
-    
+
     if (!user) {
       // Generate alphanumeric referral code
       const cleanUid = uid.toString().replaceAll('-', '').toUpperCase();
@@ -371,7 +388,7 @@ const ensureUser = async (uid) => {
       await user.save();
       console.log(`👤 New user created: ${uid} | Referral Code: ${user.referralCode}`);
     }
-    
+
     return user;
   } catch (error) {
     console.error("❌ Error ensuring user:", error);
@@ -388,7 +405,7 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
     const user = await ensureUser(uid);
-    
+
     // Update email if provided
     if (req.body?.email) {
       if (!user.email || user.email !== req.body.email) {
@@ -396,7 +413,7 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
         await user.save();
       }
     }
-    
+
     // Prepare rewards for frontend (without probability)
     const frontendRewards = rewardsConfig.map(reward => ({
       type: reward.type,
@@ -404,7 +421,7 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
       label: reward.label,
       code: reward.code
     }));
-    
+
     res.json({
       success: true,
       free_spin_available: user.freeSpins > 0,
@@ -418,14 +435,15 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
         dailyFreeSpins: user.dailyFreeSpinsCount || 0,
         adBonusSpins: user.adBonusSpinsCount || 0,
         wonBonusSpins: user.wonBonusSpinsCount || 0,
-        referralEarnings: user.referralEarnings || 0
+        referralEarnings: user.referralEarnings || 0,
+        referralCount: user.referralCount || 0  // NEW: Include referral count
       }
     });
   } catch (error) {
     console.error('❌ Status error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error: " + error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
     });
   }
 });
@@ -445,9 +463,9 @@ app.post("/api/spin/bonus", validateSpinRequest, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Bonus spin error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error: " + error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
     });
   }
 });
@@ -457,9 +475,9 @@ app.post("/api/spin/register-token", validateSpinRequest, async (req, res) => {
   try {
     const { uid, token } = req.body;
     if (!token) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Token is required" 
+      return res.status(400).json({
+        success: false,
+        message: "Token is required"
       });
     }
 
@@ -469,15 +487,15 @@ app.post("/api/spin/register-token", validateSpinRequest, async (req, res) => {
       { $addToSet: { fcm_tokens: token } }
     );
 
-    res.json({ 
-      success: true, 
-      message: "Token registered successfully" 
+    res.json({
+      success: true,
+      message: "Token registered successfully"
     });
   } catch (error) {
     console.error('❌ Register token error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -487,12 +505,12 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
     const user = await ensureUser(uid);
-    
+
     // Check if user has spins available
     if (user.freeSpins <= 0 && user.bonusSpins <= 0) {
-      return res.json({ 
-        success: false, 
-        message: "No spins available. Watch an ad or wait for tomorrow's free spin." 
+      return res.json({
+        success: false,
+        message: "No spins available. Watch an ad or wait for tomorrow's free spin."
       });
     }
 
@@ -515,7 +533,7 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
     const randomValue = Math.random();
     let cumulativeProbability = 0;
     let selectedReward = rewardsConfig[0];
-    
+
     for (const reward of rewardsConfig) {
       cumulativeProbability += reward.probability;
       if (randomValue <= cumulativeProbability) {
@@ -525,7 +543,7 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
     }
 
     const rewardIndex = rewardsConfig.findIndex(r => r === selectedReward);
-    
+
     // Apply reward
     if (selectedReward.type === "coins") {
       user.walletCoins += selectedReward.value;
@@ -550,9 +568,9 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
       walletAfter: user.walletCoins
     });
     await spinHistory.save();
-    
+
     console.log(`🎰 Spin completed for ${uid}: ${selectedReward.label}`);
-    
+
     res.json({
       success: true,
       sector: rewardIndex,
@@ -564,9 +582,9 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Spin error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -581,8 +599,8 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
       .limit(50)
       .lean();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       user: {
         uid: user.uid,
         email: user.email,
@@ -591,6 +609,8 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
         walletCoins: user.walletCoins,
         referralCode: user.referralCode,
         referredBy: user.referredBy,
+        referralCount: user.referralCount,  // NEW: Include referral count in ledger
+        referralEarnings: user.referralEarnings,
         createdAt: user.createdAt
       },
       history: history,
@@ -598,14 +618,14 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Ledger error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
 
-// Apply referral code
+// Apply referral code - UPDATED WITH REFERRAL COUNT TRACKING
 app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
   try {
     const { uid, referralCode } = req.body;
@@ -614,37 +634,38 @@ app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
 
     // Validation checks
     if (newUser.referredBy) {
-      return res.json({ 
-        success: false, 
-        message: "You have already used a referral code" 
+      return res.json({
+        success: false,
+        message: "You have already used a referral code"
       });
     }
-    
+
     if (newUser.referralCode === code) {
-      return res.json({ 
-        success: false, 
-        message: "You cannot use your own referral code" 
+      return res.json({
+        success: false,
+        message: "You cannot use your own referral code"
       });
     }
 
     const referrer = await User.findOne({ referralCode: code });
     if (!referrer) {
-      return res.json({ 
-        success: false, 
-        message: "Invalid referral code" 
+      return res.json({
+        success: false,
+        message: "Invalid referral code"
       });
     }
 
-    // Apply referral rewards
+    // Apply referral rewards - UPDATED TO INCREMENT REFERRAL COUNT
     referrer.walletCoins += 100;
     referrer.referralEarnings += 100;
+    referrer.referralCount += 1;  // NEW: Increment referral count
     await referrer.save();
-    
+
     newUser.referredBy = referrer.uid;
     newUser.walletCoins += 50; // Welcome bonus for new user
     newUser.referralRewarded = true;
     await newUser.save();
-    
+
     // Create history entries
     await SpinHistory.create({
       uid: referrer.uid,
@@ -665,22 +686,28 @@ app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
       rewardLabel: "Welcome Bonus",
       walletAfter: newUser.walletCoins
     });
-    
+
     console.log(`🤝 Referral applied: ${uid} referred by ${referrer.uid}`);
-    
-    res.json({ 
-      success: true, 
+    console.log(`   📊 ${referrer.uid} now has ${referrer.referralCount} referrals`);
+
+    res.json({
+      success: true,
       message: "Referral applied successfully! Referrer received 100 coins, you received 50 coins.",
       rewards: {
-        referrer: { coins: 100, total: referrer.walletCoins },
+        referrer: { 
+          coins: 100, 
+          total: referrer.walletCoins,
+          referralCount: referrer.referralCount,  // NEW: Include referral count in response
+          totalReferralEarnings: referrer.referralEarnings
+        },
         newUser: { coins: 50, total: newUser.walletCoins }
       }
     });
   } catch (error) {
     console.error('❌ Referral error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -691,15 +718,15 @@ app.post("/api/spin/reset", validateSpinRequest, async (req, res) => {
     const { uid } = req.body;
     await User.deleteOne({ uid });
     await SpinHistory.deleteMany({ uid });
-    res.json({ 
-      success: true, 
-      message: "User data reset successfully" 
+    res.json({
+      success: true,
+      message: "User data reset successfully"
     });
   } catch (error) {
     console.error('❌ Reset error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -713,15 +740,15 @@ app.get("/api/spin/admin/users", async (req, res) => {
   try {
     const adminKey = req.headers['x-admin-key'];
     if (!adminKey || adminKey !== process.env.ADMIN_SECRET) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Admin access denied" 
+      return res.status(403).json({
+        success: false,
+        message: "Admin access denied"
       });
     }
 
     const users = await User.find().sort({ createdAt: -1 }).lean();
     const totalSpins = await SpinHistory.countDocuments();
-    
+
     res.json({
       success: true,
       total_users: users.length,
@@ -730,9 +757,80 @@ app.get("/api/spin/admin/users", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Admin users error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error: " + error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
+    });
+  }
+});
+
+// NEW: Admin endpoint for referral statistics
+app.get("/api/spin/admin/referral-stats", async (req, res) => {
+  try {
+    const adminKey = req.headers['x-admin-key'];
+    if (!adminKey || adminKey !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access denied"
+      });
+    }
+
+    // Get top referrers
+    const topReferrers = await User.find({ referralCount: { $gt: 0 } })
+      .sort({ referralCount: -1 })
+      .limit(20)
+      .select('uid email referralCode referralCount referralEarnings walletCoins createdAt')
+      .lean();
+
+    // Get overall referral statistics
+    const referralStats = await User.aggregate([
+      { 
+        $group: {
+          _id: null,
+          totalUsers: { $sum: 1 },
+          totalReferrals: { $sum: "$referralCount" },
+          totalReferralEarnings: { $sum: "$referralEarnings" },
+          usersWithReferrals: { $sum: { $cond: [{ $gt: ["$referralCount", 0] }, 1, 0] } },
+          avgReferralsPerUser: { $avg: "$referralCount" }
+        }
+      }
+    ]);
+
+    // Get referral distribution
+    const referralDistribution = await User.aggregate([
+      { 
+        $match: { referralCount: { $gt: 0 } }
+      },
+      {
+        $bucket: {
+          groupBy: "$referralCount",
+          boundaries: [1, 2, 3, 5, 10, 20, 50, 100],
+          default: "100+",
+          output: {
+            count: { $sum: 1 },
+            totalEarnings: { $sum: "$referralEarnings" }
+          }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      overall_stats: referralStats[0] || {},
+      top_referrers: topReferrers,
+      referral_distribution: referralDistribution,
+      summary: {
+        total_referrals_made: referralStats[0]?.totalReferrals || 0,
+        total_coins_earned_from_referrals: referralStats[0]?.totalReferralEarnings || 0,
+        percentage_users_with_referrals: referralStats[0] ? 
+          (referralStats[0].usersWithReferrals / referralStats[0].totalUsers * 100).toFixed(2) : 0
+      }
+    });
+  } catch (error) {
+    console.error('❌ Admin referral stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
     });
   }
 });
@@ -742,9 +840,9 @@ app.post("/api/spin/admin/reset-daily", async (req, res) => {
   try {
     const internalKey = req.headers['x-internal-key'];
     if (!internalKey || internalKey !== process.env.SPIN_INTERNAL_KEY) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Internal access denied" 
+      return res.status(403).json({
+        success: false,
+        message: "Internal access denied"
       });
     }
 
@@ -770,9 +868,9 @@ app.post("/api/spin/admin/reset-daily", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Reset daily error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error: " + error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
     });
   }
 });
@@ -782,22 +880,22 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
   try {
     const internalKey = req.headers['x-internal-key'];
     if (!internalKey || internalKey !== process.env.SPIN_INTERNAL_KEY) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Internal access denied" 
+      return res.status(403).json({
+        success: false,
+        message: "Internal access denied"
       });
     }
 
     if (!admin || !firebaseInitialized) {
-      return res.status(503).json({ 
-        success: false, 
-        message: "FCM not configured - Firebase Admin SDK not initialized" 
+      return res.status(503).json({
+        success: false,
+        message: "FCM not configured - Firebase Admin SDK not initialized"
       });
     }
 
-    const users = await User.find({ 
-      freeSpins: { $gt: 0 }, 
-      fcm_tokens: { $exists: true, $not: { $size: 0 } } 
+    const users = await User.find({
+      freeSpins: { $gt: 0 },
+      fcm_tokens: { $exists: true, $not: { $size: 0 } }
     });
 
     console.log(`📱 Found ${users.length} users eligible for FCM notifications`);
@@ -819,7 +917,7 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
               uid: user.uid
             }
           };
-          
+
           await admin.messaging().sendEachForMulticast(message);
           notifiedCount++;
         } catch (error) {
@@ -836,9 +934,9 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Run notify error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error: " + error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
     });
   }
 });
@@ -849,8 +947,8 @@ app.post("/api/spin/admin/run-notify", async (req, res) => {
 
 // 404 handler for undefined routes
 app.use('*', (req, res) => {
-  res.status(404).json({ 
-    success: false, 
+  res.status(404).json({
+    success: false,
     message: "API endpoint not found",
     path: req.originalUrl
   });
@@ -859,17 +957,17 @@ app.use('*', (req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('🔥 Global Error Handler:', err);
-  
+
   if (err.status === 429) {
-    return res.status(429).json({ 
-      success: false, 
-      message: "Too many requests, please try again later" 
+    return res.status(429).json({
+      success: false,
+      message: "Too many requests, please try again later"
     });
   }
-  
-  res.status(500).json({ 
-    success: false, 
-    message: process.env.NODE_ENV === 'production' ? "Internal server error" : err.message 
+
+  res.status(500).json({
+    success: false,
+    message: process.env.NODE_ENV === 'production' ? "Internal server error" : err.message
   });
 });
 
@@ -905,7 +1003,7 @@ const server = app.listen(PORT, () => {
   console.log(`🎯 Rewards configuration: ${rewardsConfig.length} rewards loaded`);
   console.log(`🛡️ Security: Helmet, Rate Limiting, Compression enabled`);
   console.log(`📱 Firebase Admin: ${firebaseInitialized ? '✅ Initialized' : '❌ Disabled'}`);
-  
+
   const dbStatus = mongoose.connection.readyState === 1 ? "✅ Connected" : "❌ Disconnected";
   console.log(`💾 MongoDB: ${dbStatus}`);
 });
@@ -924,3 +1022,35 @@ const gracefulShutdown = () => {
 
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
+
+// =====================
+// MIGRATION SCRIPT (One-time use)
+// =====================
+// Uncomment and run once to migrate existing data
+/*
+const migrateReferralCounts = async () => {
+  try {
+    console.log('🔄 Starting referral count migration...');
+    const users = await User.find({ referralEarnings: { $gt: 0 } });
+    
+    let migrated = 0;
+    for (const user of users) {
+      // Calculate referral count from earnings (100 coins per referral)
+      const calculatedCount = Math.floor(user.referralEarnings / 100);
+      if (user.referralCount !== calculatedCount) {
+        user.referralCount = calculatedCount;
+        await user.save();
+        migrated++;
+        console.log(`   Migrated ${user.uid}: ${calculatedCount} referrals`);
+      }
+    }
+    
+    console.log(`✅ Migration completed: ${migrated} users updated`);
+  } catch (error) {
+    console.error('❌ Migration failed:', error);
+  }
+};
+
+// Uncomment to run migration on startup
+// migrateReferralCounts();
+*/
