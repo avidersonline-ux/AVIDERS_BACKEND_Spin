@@ -142,15 +142,15 @@ async function syncToWalletEarn({ uid, amount, source, referenceId }) {
 
 async function getCentralWalletBalance(uid) {
   try {
-    const response = await http.get(`${WALLET_SERVICE_URL}/api/wallet/balance/${uid}`);
-    if (response.data?.success) {
+    const response = await http.get(`${WALLET_SERVICE_URL}/api/wallet/${uid}`);
+    if (response.data) {
       return {
         success: true,
-        balance: response.data.balance,
+        balance: response.data.unlockedAvd + (response.data.lockedAvd || 0),
         totalEarned: response.data.totalEarned || 0,
       };
     }
-    return { success: false, balance: 0, error: response.data?.message || "Unknown error" };
+    return { success: false, balance: 0, error: "Wallet not found" };
   } catch (error) {
     console.error(`❌ Failed to fetch central wallet for ${uid}:`, error.message);
     return { success: false, balance: 0, error: error.message };
@@ -463,6 +463,7 @@ app.get("/", (req, res) => {
       ledger: "/api/spin/ledger",
       referral_apply: "/api/referral/apply",
       register_token: "/api/spin/register-token",
+      sync_wallet: "/api/spin/sync-wallet",
       reset_admin_only: "/api/spin/admin/reset-user",
       sync_pending_wallet: "/api/spin/admin/sync-pending-wallet",
       admin_users: "/api/spin/admin/users",
@@ -713,6 +714,102 @@ app.post("/api/spin/ledger", validateSpinRequest, async (req, res) => {
   } catch (error) {
     console.error("❌ Ledger error:", error);
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// =====================
+// MANUAL WALLET SYNC FOR USERS
+// =====================
+
+app.post("/api/spin/sync-wallet", validateSpinRequest, async (req, res) => {
+  try {
+    const { uid } = req.body;
+    const user = await ensureUser(uid);
+
+    // Get user's unsynced transactions
+    const unsyncedTransactions = await SpinHistory.find({
+      uid,
+      walletSynced: false,
+      rewardType: "coins",
+      coinsEarned: { $gt: 0 }
+    }).sort({ timestamp: -1 }).limit(20).lean();
+
+    if (unsyncedTransactions.length === 0) {
+      return res.json({
+        success: true,
+        message: "No pending sync found - wallet appears to be in sync",
+        pending: 0,
+        synced: 0
+      });
+    }
+
+    let syncedCount = 0;
+    let failedCount = 0;
+    const results = [];
+
+    // Attempt to sync each unsynced transaction
+    for (const tx of unsyncedTransactions) {
+      const result = await syncToWalletEarn({
+        uid,
+        amount: tx.coinsEarned,
+        source: tx.spinSource || "spinwheel",
+        referenceId: tx._id.toString(),
+      });
+
+      if (result.success) {
+        await SpinHistory.updateOne(
+          { _id: tx._id },
+          { $set: { walletSynced: true, walletSyncError: "" } }
+        );
+        syncedCount++;
+        results.push({
+          id: tx._id.toString(),
+          amount: tx.coinsEarned,
+          status: "synced",
+          timestamp: tx.timestamp
+        });
+      } else {
+        await SpinHistory.updateOne(
+          { _id: tx._id },
+          { $set: { walletSynced: false, walletSyncError: result.error || "sync_failed" } }
+        );
+        failedCount++;
+        results.push({
+          id: tx._id.toString(),
+          amount: tx.coinsEarned,
+          status: "failed",
+          error: result.error,
+          timestamp: tx.timestamp
+        });
+      }
+    }
+
+    // Get updated central wallet balance
+    const centralWallet = await getCentralWalletBalance(uid);
+
+    res.json({
+      success: true,
+      message: `Sync attempted: ${syncedCount} successful, ${failedCount} failed`,
+      summary: {
+        total_pending: unsyncedTransactions.length,
+        successfully_synced: syncedCount,
+        failed_to_sync: failedCount
+      },
+      central_wallet: {
+        available: centralWallet.success,
+        balance: centralWallet.balance || 0,
+        last_checked: new Date().toISOString()
+      },
+      local_wallet: user.walletCoins,
+      results: results.slice(0, 5) // Return first 5 results for overview
+    });
+
+  } catch (error) {
+    console.error('❌ Manual wallet sync error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 });
 
