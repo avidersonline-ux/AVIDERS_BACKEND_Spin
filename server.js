@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios"); // Added for central wallet sync
 
 // Production security & performance imports
 const compression = require('compression');
@@ -19,7 +20,7 @@ let firebaseInitialized = false;
 
 try {
   admin = require('firebase-admin');
-  
+
   // Try to initialize Firebase Admin if not already initialized
   if (!admin.apps.length) {
     // Priority 1: Use environment variable (Render deployment)
@@ -102,6 +103,27 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' }));
+
+// =====================
+// WALLET SYNC HELPER
+// =====================
+const WALLET_SERVICE_URL = process.env.WALLET_SERVICE_URL || "https://aviders-wallet.onrender.com";
+
+async function syncToWallet(uid, amount, source, referenceId) {
+  try {
+    const response = await axios.post(`${WALLET_SERVICE_URL}/api/wallet/earn`, {
+      userId: uid,
+      amount: amount,
+      source: source,
+      referenceId: referenceId
+    });
+    console.log(`✅ Synced ${amount} AVD to central wallet for ${uid}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Failed to sync to wallet for ${uid}: ${error.response?.data?.error || error.message}`);
+    return false;
+  }
+}
 
 // =====================
 // INPUT VALIDATION SCHEMAS
@@ -325,7 +347,7 @@ app.get("/health", async (req, res) => {
   try {
     const userCount = await User.countDocuments().catch(() => 0);
     const spinCount = await SpinHistory.countDocuments().catch(() => 0);
-    
+
     // Get referral stats
     const referralStats = await User.aggregate([
       { $group: {
@@ -569,6 +591,11 @@ app.post("/api/spin/spin", validateSpinRequest, async (req, res) => {
     });
     await spinHistory.save();
 
+    // SYNC TO CENTRAL WALLET
+    if (selectedReward.type === "coins") {
+       await syncToWallet(uid, selectedReward.value, "spinwheel", spinHistory._id.toString());
+    }
+
     console.log(`🎰 Spin completed for ${uid}: ${selectedReward.label}`);
 
     res.json({
@@ -687,6 +714,10 @@ app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
       walletAfter: newUser.walletCoins
     });
 
+    // SYNC TO CENTRAL WALLET
+    await syncToWallet(referrer.uid, 100, "referral", `REF_BY_${uid}_${Date.now()}`);
+    await syncToWallet(uid, 50, "referral", `WELCOME_${uid}`);
+
     console.log(`🤝 Referral applied: ${uid} referred by ${referrer.uid}`);
     console.log(`   📊 ${referrer.uid} now has ${referrer.referralCount} referrals`);
 
@@ -694,8 +725,8 @@ app.post("/api/referral/apply", validateReferralRequest, async (req, res) => {
       success: true,
       message: "Referral applied successfully! Referrer received 100 coins, you received 50 coins.",
       rewards: {
-        referrer: { 
-          coins: 100, 
+        referrer: {
+          coins: 100,
           total: referrer.walletCoins,
           referralCount: referrer.referralCount,  // NEW: Include referral count in response
           totalReferralEarnings: referrer.referralEarnings
@@ -784,7 +815,7 @@ app.get("/api/spin/admin/referral-stats", async (req, res) => {
 
     // Get overall referral statistics
     const referralStats = await User.aggregate([
-      { 
+      {
         $group: {
           _id: null,
           totalUsers: { $sum: 1 },
@@ -798,7 +829,7 @@ app.get("/api/spin/admin/referral-stats", async (req, res) => {
 
     // Get referral distribution
     const referralDistribution = await User.aggregate([
-      { 
+      {
         $match: { referralCount: { $gt: 0 } }
       },
       {
@@ -822,7 +853,7 @@ app.get("/api/spin/admin/referral-stats", async (req, res) => {
       summary: {
         total_referrals_made: referralStats[0]?.totalReferrals || 0,
         total_coins_earned_from_referrals: referralStats[0]?.totalReferralEarnings || 0,
-        percentage_users_with_referrals: referralStats[0] ? 
+        percentage_users_with_referrals: referralStats[0] ?
           (referralStats[0].usersWithReferrals / referralStats[0].totalUsers * 100).toFixed(2) : 0
       }
     });
@@ -1032,7 +1063,7 @@ const migrateReferralCounts = async () => {
   try {
     console.log('🔄 Starting referral count migration...');
     const users = await User.find({ referralEarnings: { $gt: 0 } });
-    
+
     let migrated = 0;
     for (const user of users) {
       // Calculate referral count from earnings (100 coins per referral)
@@ -1044,7 +1075,7 @@ const migrateReferralCounts = async () => {
         console.log(`   Migrated ${user.uid}: ${calculatedCount} referrals`);
       }
     }
-    
+
     console.log(`✅ Migration completed: ${migrated} users updated`);
   } catch (error) {
     console.error('❌ Migration failed:', error);
