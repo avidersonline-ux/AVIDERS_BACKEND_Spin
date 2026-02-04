@@ -126,6 +126,27 @@ async function syncToWallet(uid, amount, source, referenceId) {
 }
 
 // =====================
+// WALLET BALANCE CHECK FUNCTION - ADDED THIS
+// =====================
+
+async function getCentralWalletBalance(uid) {
+  try {
+    const response = await axios.get(`${WALLET_SERVICE_URL}/api/wallet/balance/${uid}`);
+    if (response.data.success) {
+      return {
+        success: true,
+        balance: response.data.balance,
+        totalEarned: response.data.totalEarned || 0
+      };
+    }
+    return { success: false, balance: 0, error: response.data.message };
+  } catch (error) {
+    console.error(`❌ Failed to fetch central wallet for ${uid}:`, error.message);
+    return { success: false, balance: 0, error: error.message };
+  }
+}
+
+// =====================
 // INPUT VALIDATION SCHEMAS
 // =====================
 
@@ -317,12 +338,13 @@ app.use((req, res, next) => {
 // API ENDPOINTS
 // =====================
 
-// Root endpoint
+// Root endpoint - UPDATED VERSION AND ENDPOINTS
 app.get("/", (req, res) => {
   res.json({
     success: true,
     message: "🎰 AVIDERS Spin Wheel API Server",
-    version: "2.6.0",
+    version: "2.7.0", // UPDATED VERSION
+    features: ["wallet_sync", "fcm_notifications", "referral_system"],
     endpoints: {
       health: "/health",
       spin_status: "/api/spin/status",
@@ -332,10 +354,12 @@ app.get("/", (req, res) => {
       referral_apply: "/api/referral/apply",
       register_token: "/api/spin/register-token",
       reset: "/api/spin/reset",
+      sync_wallet: "/api/spin/sync-wallet", // NEW ENDPOINT
       admin_reset: "/api/spin/admin/reset-daily",
       admin_notify: "/api/spin/admin/run-notify",
       admin_users: "/api/spin/admin/users",
-      admin_referral_stats: "/api/spin/admin/referral-stats" // NEW
+      admin_referral_stats: "/api/spin/admin/referral-stats",
+      admin_wallet_sync_overview: "/api/spin/admin/wallet-sync-overview" // NEW ENDPOINT
     }
   });
 });
@@ -422,7 +446,7 @@ const ensureUser = async (uid) => {
 // SPIN API ENDPOINTS
 // =====================
 
-// Get user status and available spins
+// Get user status and available spins - UPDATED WITH WALLET SYNC INFO
 app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
   try {
     const { uid } = req.body;
@@ -444,6 +468,9 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
       code: reward.code
     }));
 
+    // Get central wallet balance - NEW
+    const centralWallet = await getCentralWalletBalance(uid);
+
     res.json({
       success: true,
       free_spin_available: user.freeSpins > 0,
@@ -458,7 +485,22 @@ app.post("/api/spin/status", validateSpinRequest, async (req, res) => {
         adBonusSpins: user.adBonusSpinsCount || 0,
         wonBonusSpins: user.wonBonusSpinsCount || 0,
         referralEarnings: user.referralEarnings || 0,
-        referralCount: user.referralCount || 0  // NEW: Include referral count
+        referralCount: user.referralCount || 0
+      },
+      // NEW: Central wallet information
+      central_wallet: {
+        available: centralWallet.success,
+        balance: centralWallet.balance,
+        total_earned: centralWallet.totalEarned || 0,
+        last_updated: new Date().toISOString()
+      },
+      // NEW: Sync status indicator
+      sync_status: {
+        local_balance: user.walletCoins,
+        sync_required: centralWallet.success ? user.walletCoins > centralWallet.balance : false,
+        message: centralWallet.success ? 
+          "Wallet sync active" : 
+          "Central wallet temporarily unavailable"
       }
     });
   } catch (error) {
@@ -763,6 +805,71 @@ app.post("/api/spin/reset", validateSpinRequest, async (req, res) => {
 });
 
 // =====================
+// MANUAL WALLET SYNC ENDPOINT - NEW ENDPOINT ADDED
+// =====================
+
+app.post("/api/spin/sync-wallet", validateSpinRequest, async (req, res) => {
+  try {
+    const { uid } = req.body;
+    const user = await ensureUser(uid);
+    
+    // Get current central wallet balance
+    const centralWallet = await getCentralWalletBalance(uid);
+    
+    // Calculate unsynced amount
+    const unsyncedAmount = user.walletCoins - (centralWallet.success ? centralWallet.balance : 0);
+    
+    if (unsyncedAmount <= 0) {
+      return res.json({
+        success: true,
+        message: "Wallet is already in sync",
+        sync_required: false,
+        local_balance: user.walletCoins,
+        central_balance: centralWallet.balance || 0
+      });
+    }
+    
+    // Sync the unsynced amount
+    const syncSuccess = await syncToWallet(
+      uid,
+      unsyncedAmount,
+      "manual_sync",
+      `MANUAL_SYNC_${Date.now()}`
+    );
+    
+    if (syncSuccess) {
+      // Get updated central wallet balance
+      const updatedCentralWallet = await getCentralWalletBalance(uid);
+      
+      res.json({
+        success: true,
+        message: `Successfully synced ${unsyncedAmount} coins to central wallet`,
+        details: {
+          local_balance_before: user.walletCoins,
+          synced_amount: unsyncedAmount,
+          central_balance_after: updatedCentralWallet.balance || 0
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: "Failed to sync to central wallet",
+        sync_required: true,
+        unsynced_amount: unsyncedAmount
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Manual wallet sync error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// =====================
 // ADMIN ENDPOINTS
 // =====================
 
@@ -859,6 +966,70 @@ app.get("/api/spin/admin/referral-stats", async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Admin referral stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
+    });
+  }
+});
+
+// =====================
+// ADMIN: WALLET SYNC OVERVIEW - NEW ENDPOINT ADDED
+// =====================
+
+app.get("/api/spin/admin/wallet-sync-overview", async (req, res) => {
+  try {
+    const adminKey = req.headers['x-admin-key'];
+    if (!adminKey || adminKey !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access denied"
+      });
+    }
+
+    // Get all users with wallet balance
+    const users = await User.find({ walletCoins: { $gt: 0 } })
+      .select('uid walletCoins email referralCode createdAt')
+      .limit(100); // Limit to first 100 for performance
+
+    let totalLocalBalance = 0;
+    let usersWithUnsynced = 0;
+    const syncStatus = [];
+
+    // Check sync status for each user
+    for (const user of users) {
+      const centralWallet = await getCentralWalletBalance(user.uid);
+      const unsyncedAmount = user.walletCoins - (centralWallet.success ? centralWallet.balance : 0);
+      
+      totalLocalBalance += user.walletCoins;
+      
+      if (unsyncedAmount > 0) {
+        usersWithUnsynced++;
+      }
+      
+      syncStatus.push({
+        uid: user.uid,
+        local_balance: user.walletCoins,
+        central_balance: centralWallet.balance || 0,
+        unsynced_amount: unsyncedAmount,
+        sync_required: unsyncedAmount > 0,
+        last_check: new Date().toISOString()
+      });
+    }
+
+    res.json({
+      success: true,
+      overview: {
+        total_users_checked: users.length,
+        total_local_balance: totalLocalBalance,
+        users_requiring_sync: usersWithUnsynced,
+        sync_coverage: ((users.length - usersWithUnsynced) / users.length * 100).toFixed(2) + '%'
+      },
+      sync_status: syncStatus
+    });
+    
+  } catch (error) {
+    console.error('❌ Wallet sync overview error:', error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message
