@@ -143,14 +143,15 @@ async function syncToWalletEarn({ uid, amount, source, referenceId }) {
 async function getCentralWalletBalance(uid) {
   try {
     const response = await http.get(`${WALLET_SERVICE_URL}/api/wallet/${uid}`);
-    if (response.data) {
-      return {
-        success: true,
-        balance: response.data.unlockedAvd + (response.data.lockedAvd || 0),
-        totalEarned: response.data.totalEarned || 0,
-      };
-    }
-    return { success: false, balance: 0, error: "Wallet not found" };
+
+    const unlocked = response.data?.unlockedAvd || 0;
+    const locked = response.data?.lockedAvd || 0;
+
+    return {
+      success: true,
+      balance: unlocked + locked,
+      totalEarned: response.data?.totalEarned || 0,
+    };
   } catch (error) {
     console.error(`❌ Failed to fetch central wallet for ${uid}:`, error.message);
     return { success: false, balance: 0, error: error.message };
@@ -750,7 +751,7 @@ app.post("/api/spin/sync-wallet", validateSpinRequest, async (req, res) => {
     // Attempt to sync each unsynced transaction
     for (const tx of unsyncedTransactions) {
       const result = await syncToWalletEarn({
-        uid,
+        uid: tx.uid,
         amount: tx.coinsEarned,
         source: tx.spinSource || "spinwheel",
         referenceId: tx._id.toString(),
