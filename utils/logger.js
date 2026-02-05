@@ -1,55 +1,39 @@
+const winston = require('winston');
+const path = require('path');
+
 /**
- * Custom Error class for operational errors that are safe to expose to the client.
+ * Custom Logger configuration for AVIDERS Backend
  */
-class AppError extends Error {
-  constructor(message, statusCode) {
-    super(message);
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.errors({ stack: true }),
+    winston.format.splat(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'aviders-spin-backend' },
+  transports: [
+    new winston.transports.File({
+      filename: path.join(__dirname, '../logs/error.log'),
+      level: 'error'
+    }),
+    new winston.transports.File({
+      filename: path.join(__dirname, '../logs/combined.log')
+    }),
+  ],
+});
 
-    this.statusCode = statusCode;
-    this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
-    this.isOperational = true;
-
-    Error.captureStackTrace(this, this.constructor);
-  }
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(new winston.transports.Console({
+    format: winston.format.combine(
+      winston.format.colorize(),
+      winston.format.simple(),
+      winston.format.printf(({ level, message, timestamp, stack }) => {
+        return `${timestamp} ${level}: ${stack || message}`;
+      })
+    ),
+  }));
 }
 
-/**
- * Global error handling middleware.
- * Catches all errors and sends a structured JSON response.
- */
-const globalErrorHandler = (err, req, res, next) => {
-  err.statusCode = err.statusCode || 500;
-  err.status = err.status || 'error';
-
-  // Log all errors for internal monitoring
-  if (err.statusCode === 500) {
-    console.error('🔥 SERVER ERROR:', err);
-  } else {
-    console.warn(`⚠️ ${err.statusCode} - ${err.message}`);
-  }
-
-  const response = {
-    success: false,
-    status: err.status,
-    message: err.message,
-  };
-
-  // Include stack trace only in development
-  if (process.env.NODE_ENV === 'development') {
-    response.stack = err.stack;
-    response.error = err;
-  }
-
-  // In production, mask non-operational errors
-  if (process.env.NODE_ENV === 'production' && !err.isOperational) {
-    response.message = 'Something went wrong on our end. Please try again later.';
-  }
-
-  res.status(err.statusCode).json(response);
-};
-
-module.exports = {
-  AppError,
-  globalErrorHandler,
-};
-
+module.exports = logger;
