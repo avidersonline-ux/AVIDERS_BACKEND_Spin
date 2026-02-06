@@ -6,7 +6,10 @@ const { verifyToken } = require('../../middleware/auth');
 const catchAsync = require('../../utils/catchAsync');
 
 // User Routes
+// POST /api/claims/upload
 router.post('/upload', verifyToken, upload.single('screenshot'), catchAsync((req, res, next) => claimsController.uploadClaim(req, res, next)));
+
+// GET /api/claims/user/:uid
 router.get('/user/:uid', verifyToken, catchAsync((req, res, next) => claimsController.getMyClaims(req, res, next)));
 
 // Admin Routes
