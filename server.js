@@ -99,14 +99,6 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 
 // =====================
-// GLOBAL REQUEST LOGGER (DEBUG)
-// =====================
-app.use((req, res, next) => {
-  console.log(`📡 [INCOMING] ${req.method} ${req.originalUrl}`);
-  next();
-});
-
-// =====================
 // INPUT VALIDATION
 // =====================
 
@@ -187,7 +179,7 @@ app.use("/api/", apiLimiter);
 
 let rewardsConfig = [];
 try {
-  const configPath = path.join(__dirname, "config", "rewards.config.json");
+  const configPath = path.join(__dirname, "modules", "spinwheel-service", "config", "rewards.config.json");
   if (fs.existsSync(configPath)) {
     const configData = fs.readFileSync(configPath, "utf8");
     rewardsConfig = JSON.parse(configData).rewards;
@@ -856,6 +848,15 @@ app.use("/api/subscription", subscriptionRoutes);
 app.use("/api/scanpay", scanpayRoutes);
 app.use("/api/affiliate", affiliateRoutes);
 app.use("/api/claims", claimsRoutes);
+
+// Mounting duplicates for /api/spin/ prefix to support legacy/mobile app pathing
+app.use("/api/spin/wallet", walletRoutes);
+app.use("/api/spin/referral", referralRoutes);
+app.use("/api/spin/cashback", cashbackRoutes);
+app.use("/api/spin/subscription", subscriptionRoutes);
+app.use("/api/spin/scanpay", scanpayRoutes);
+app.use("/api/spin/affiliate", affiliateRoutes);
+app.use("/api/spin/claims", claimsRoutes);
 
 // Background Mirroring for Legacy Spin Wheel
 const walletService = require("./modules/wallet/wallet.service");
