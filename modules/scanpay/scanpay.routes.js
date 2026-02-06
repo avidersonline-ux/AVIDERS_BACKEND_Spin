@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const scanpayService = require('./scanpay.service');
+const { verifyToken } = require('../../middleware/auth');
 
-router.post('/pay', async (req, res) => {
+router.post('/pay', verifyToken, async (req, res) => {
   try {
     const { uid, merchantId, amount, transactionId } = req.body;
     const transaction = await scanpayService.processScanAndPay(uid, merchantId, amount, transactionId);

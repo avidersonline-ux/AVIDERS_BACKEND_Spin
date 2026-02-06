@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const subscriptionService = require('./subscription.service');
+const { verifyToken } = require('../../middleware/auth');
 
-router.post('/reward', async (req, res) => {
+router.post('/reward', verifyToken, async (req, res) => {
   try {
     const { uid, planId, amount } = req.body;
     const transaction = await subscriptionService.creditSubscriptionReward(uid, planId, amount);
@@ -12,7 +13,7 @@ router.post('/reward', async (req, res) => {
   }
 });
 
-router.post('/deduct', async (req, res) => {
+router.post('/deduct', verifyToken, async (req, res) => {
   try {
     const { uid, planId, amount } = req.body;
     const transaction = await subscriptionService.deductSubscriptionFee(uid, planId, amount);
