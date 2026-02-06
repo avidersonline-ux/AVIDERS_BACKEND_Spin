@@ -187,7 +187,7 @@ app.use("/api/", apiLimiter);
 
 let rewardsConfig = [];
 try {
-  const configPath = path.join(__dirname, "modules", "spinwheel-service", "config", "rewards.config.json");
+  const configPath = path.join(__dirname, "config", "rewards.config.json");
   if (fs.existsSync(configPath)) {
     const configData = fs.readFileSync(configPath, "utf8");
     rewardsConfig = JSON.parse(configData).rewards;
