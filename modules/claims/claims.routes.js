@@ -9,7 +9,7 @@ const catchAsync = require('../../utils/catchAsync');
 router.post('/upload', verifyToken, upload.single('screenshot'), catchAsync(claimsController.uploadClaim));
 router.get('/user/:uid', verifyToken, catchAsync(claimsController.getMyClaims));
 
-// Admin Routes (Add requireAdmin if you have it)
+// Admin Routes
 router.post('/approve', verifyToken, catchAsync(claimsController.approve));
 router.post('/reject', verifyToken, catchAsync(claimsController.reject));
 
