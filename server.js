@@ -99,6 +99,14 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 
 // =====================
+// GLOBAL REQUEST LOGGER (DEBUG)
+// =====================
+app.use((req, res, next) => {
+  console.log(`📡 [INCOMING] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
+// =====================
 // INPUT VALIDATION
 // =====================
 
