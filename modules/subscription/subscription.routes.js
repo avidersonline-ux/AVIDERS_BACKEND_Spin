@@ -23,4 +23,3 @@ router.post('/deduct', async (req, res) => {
 });
 
 module.exports = router;
-
