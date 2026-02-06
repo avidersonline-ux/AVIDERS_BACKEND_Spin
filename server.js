@@ -831,8 +831,45 @@ app.post("/api/spin/admin/run-notify", requireInternalKey, async (req, res) => {
 });
 
 // =====================
+// MODULAR WALLET WIRING
+// =====================
+const walletRoutes = require("./modules/wallet/wallet.routes");
+const referralRoutes = require("./modules/referral/referral.routes");
+const cashbackRoutes = require("./modules/cashback/cashback.routes");
+const subscriptionRoutes = require("./modules/subscription/subscription.routes");
+const scanpayRoutes = require("./modules/scanpay/scanpay.routes");
+const affiliateRoutes = require("./modules/affiliate/affiliate.routes");
+const claimsRoutes = require("./modules/claims/claims.routes");
+
+app.use("/api/wallet", walletRoutes);
+app.use("/api/referral", referralRoutes);
+app.use("/api/cashback", cashbackRoutes);
+app.use("/api/subscription", subscriptionRoutes);
+app.use("/api/scanpay", scanpayRoutes);
+app.use("/api/affiliate", affiliateRoutes);
+app.use("/api/claims", claimsRoutes);
+
+// Background Mirroring for Legacy Spin Wheel
+const walletService = require("./modules/wallet/wallet.service");
+const { SOURCES } = require("./modules/wallet/transaction.types");
+
+// Safely wrap SpinHistory to mirror coins to the new unified ledger
+const originalSpinCreate = SpinHistory.create;
+SpinHistory.create = async function(...args) {
+  const doc = await originalSpinCreate.apply(this, args);
+  if (doc.rewardType === "coins" && doc.rewardValue > 0) {
+    const source = doc.spinSource === "referral" ? SOURCES.REFERRAL : SOURCES.SPIN;
+    walletService.credit(doc.uid, doc.rewardValue, source, doc._id.toString(), { mirrored: true }, true)
+      .catch(err => console.error("Mirroring Error:", err.message));
+  }
+  return doc;
+};
+
+// =====================
 // 404 + ERROR HANDLING
 // =====================
+
+const { globalErrorHandler } = require("./utils/errorHandler");
 
 app.use("*", (req, res) => {
   res.status(404).json({
@@ -842,21 +879,7 @@ app.use("*", (req, res) => {
   });
 });
 
-app.use((err, req, res, next) => {
-  console.error("🔥 Global Error Handler:", err);
-
-  if (err.status === 429) {
-    return res.status(429).json({
-      success: false,
-      message: "Too many requests, please try again later",
-    });
-  }
-
-  res.status(500).json({
-    success: false,
-    message: process.env.NODE_ENV === "production" ? "Internal server error" : err.message,
-  });
-});
+app.use(globalErrorHandler);
 
 // =====================
 // PROCESS HANDLERS
