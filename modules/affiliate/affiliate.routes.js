@@ -5,12 +5,12 @@ const catchAsync = require('../../utils/catchAsync');
 const { requireAdmin } = require('../../middleware/auth');
 
 // User Routes
-router.post('/claim', catchAsync(controller.submitClaim));
-router.get('/claims/:uid', catchAsync(controller.getMyClaims));
-router.get('/wallet/summary/:uid', catchAsync(controller.getWalletSummary));
+router.post('/claim', catchAsync((req, res, next) => controller.submitClaim(req, res, next)));
+router.get('/claims/:uid', catchAsync((req, res, next) => controller.getMyClaims(req, res, next)));
+router.get('/wallet/summary/:uid', catchAsync((req, res, next) => controller.getWalletSummary(req, res, next)));
 
 // Admin Routes
-router.get('/admin/pending', requireAdmin, catchAsync(controller.getPending));
-router.post('/admin/approve/:claimId', requireAdmin, catchAsync(controller.approve));
+router.get('/admin/pending', requireAdmin, catchAsync((req, res, next) => controller.getPending(req, res, next)));
+router.post('/admin/approve/:claimId', requireAdmin, catchAsync((req, res, next) => controller.approve(req, res, next)));
 
 module.exports = router;
