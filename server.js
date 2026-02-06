@@ -266,7 +266,7 @@ const userSchema = new mongoose.Schema(
     wonBonusSpinsCount: { type: Number, default: 0 },
 
     // Referral
-    referralCode: { type: String, unique: true, index: true },
+    referralCode: { type: String, unique: true },
     referredBy: { type: String, default: null },
     referralRewarded: { type: Boolean, default: false },
     referralCount: { type: Number, default: 0 },
@@ -300,8 +300,7 @@ const spinHistorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-userSchema.index({ uid: 1 });
-userSchema.index({ referralCode: 1 });
+// Indexes defined within the schema (uid, referralCode) or separately
 spinHistorySchema.index({ uid: 1, timestamp: -1 });
 
 const User = mongoose.model("User", userSchema);
