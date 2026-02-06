@@ -10,4 +10,3 @@ router.post('/bonus-sync', catchAsync(async (req, res) => {
 }));
 
 module.exports = router;
-
