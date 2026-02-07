@@ -5,6 +5,11 @@ const upload = require("../../middleware/upload.middleware");
 const { verifyToken, requireAdmin } = require("../../middleware/auth");
 const catchAsync = require("../../utils/catchAsync");
 
+// Test Endpoint
+router.get("/test", (req, res) => {
+  res.json({ success: true, module: "claims working" });
+});
+
 // User Routes
 // POST /api/claims/submit - Flutter app sends claim with screenshot
 router.post(
