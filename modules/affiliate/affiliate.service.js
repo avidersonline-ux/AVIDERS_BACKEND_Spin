@@ -1,19 +1,19 @@
 const AffiliateClaim = require('../../models/AffiliateClaim');
 const Wallet = require('../../models/Wallet');
-const walletService = require('../wallet/wallet.service');
+const Transaction = require('../../models/Transaction'); // Import here
 const { AppError } = require('../../utils/errorHandler');
 const mongoose = require('mongoose');
 
 class AffiliateService {
   /**
-   * Submit a new claim
+   * Submit a new claim - 5% reward for affiliate purchases
    */
   async submitClaim(data) {
     const existing = await AffiliateClaim.findOne({ orderId: data.orderId });
     if (existing) throw new AppError('Order ID already submitted', 400);
 
-    // Calculate Reward (10% of order amount)
-    const rewardCoins = Math.floor(data.orderAmount * 0.10);
+    // ✅ Calculate Reward: 5% of order amount
+    const rewardCoins = Math.floor(data.orderAmount * 0.05);
 
     // Determine Maturity Days
     let maturityDays = 60; // Default External
@@ -54,22 +54,25 @@ class AffiliateService {
       await claim.save({ session });
 
       // Lock coins in wallet
-      await Wallet.findOneAndUpdate(
+      const wallet = await Wallet.findOneAndUpdate(
         { userId: claim.userId },
         { $inc: { lockedBalance: claim.rewardCoins } },
-        { upsert: true, session }
+        { upsert: true, new: true, session }
       );
 
-      // Log transaction
-      const Transaction = require('../../models/Transaction');
+      // ✅ Log transaction with correct balance
       await Transaction.create([{
         userId: claim.userId,
         type: 'CREDIT',
-        source: 'CASHBACK',
+        source: 'AFFILIATE', // ✅ Use proper source
         amount: claim.rewardCoins,
-        balanceAfter: 0, // Simplified as it's locked
+        balanceAfter: wallet.unlockedBalance, // ✅ Actual unlocked balance
         referenceId: `aff_appr_${claim._id}`,
-        metadata: { claimId: claim._id, status: 'locked' },
+        metadata: { 
+          claimId: claim._id, 
+          status: 'locked',
+          maturityDays: claim.maturityDays
+        },
         status: 'completed'
       }], { session });
 
@@ -84,54 +87,97 @@ class AffiliateService {
   }
 
   /**
-   * Maturity Engine (Cron Logic)
+   * Maturity Engine (Cron Logic) - OPTIMIZED
    */
   async processMaturity() {
     const now = new Date();
-    // Find approved claims where (approvedAt + maturityDays) <= now
-    const approvedClaims = await AffiliateClaim.find({ status: 'approved' });
+    
+    // ✅ Find only claims ready for maturity (optimized query)
+    const claimsToMature = await AffiliateClaim.aggregate([
+      {
+        $match: {
+          status: 'approved',
+          approvedAt: { $exists: true }
+        }
+      },
+      {
+        $addFields: {
+          // Calculate maturity date in query
+          maturityDate: {
+            $dateAdd: {
+              startDate: '$approvedAt',
+              unit: 'day',
+              amount: '$maturityDays'
+            }
+          }
+        }
+      },
+      {
+        $match: {
+          maturityDate: { $lte: now }
+        }
+      }
+    ]);
 
     let processedCount = 0;
 
-    for (const claim of approvedClaims) {
-      const maturityDate = new Date(claim.approvedAt);
-      maturityDate.setDate(maturityDate.getDate() + claim.maturityDays);
+    for (const claim of claimsToMature) {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      
+      try {
+        // Update claim status
+        await AffiliateClaim.findByIdAndUpdate(
+          claim._id,
+          {
+            status: 'matured',
+            maturedAt: new Date()
+          },
+          { session }
+        );
 
-      if (maturityDate <= now) {
-        const session = await mongoose.startSession();
-        session.startTransaction();
-        try {
-          claim.status = 'matured';
-          claim.maturedAt = new Date();
-          await claim.save({ session });
+        // Transfer from locked to unlockedBalance
+        const wallet = await Wallet.findOneAndUpdate(
+          { userId: claim.userId },
+          {
+            $inc: {
+              lockedBalance: -claim.rewardCoins,
+              unlockedBalance: claim.rewardCoins
+            }
+          },
+          { new: true, session }
+        );
 
-          // Transfer from locked to unlockedBalance
-          await Wallet.findOneAndUpdate(
-            { userId: claim.userId },
-            {
-              $inc: {
-                lockedBalance: -claim.rewardCoins,
-                unlockedBalance: claim.rewardCoins
-              }
-            },
-            { session }
-          );
+        // Update User model
+        await mongoose.model('User').updateOne(
+          { uid: claim.userId },
+          { $inc: { walletCoins: claim.rewardCoins } },
+          { session }
+        );
 
-          // Update User model (Primary for mobile app)
-          await mongoose.model('User').updateOne(
-            { uid: claim.userId },
-            { $inc: { walletCoins: claim.rewardCoins } },
-            { session }
-          );
+        // ✅ Log maturity transaction
+        await Transaction.create([{
+          userId: claim.userId,
+          type: 'CREDIT',
+          source: 'AFFILIATE_MATURED',
+          amount: claim.rewardCoins,
+          balanceAfter: wallet.unlockedBalance,
+          referenceId: `aff_matured_${claim._id}`,
+          metadata: { 
+            claimId: claim._id, 
+            originalApprovalDate: claim.approvedAt 
+          },
+          status: 'completed'
+        }], { session });
 
-          await session.commitTransaction();
-          processedCount++;
-        } catch (err) {
-          await session.abortTransaction();
-          console.error(`Maturity failed for ${claim._id}:`, err.message);
-        } finally {
-          session.endSession();
-        }
+        await session.commitTransaction();
+        processedCount++;
+      } catch (err) {
+        await session.abortTransaction();
+        console.error(`Maturity failed for ${claim._id}:`, err.message);
+        // Optionally, you could add retry logic or alert here
+      } finally {
+        session.endSession();
       }
     }
     return processedCount;
