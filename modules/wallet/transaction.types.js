@@ -8,9 +8,9 @@ module.exports = {
     CASHBACK: 'CASHBACK',
     SUBSCRIPTION: 'SUBSCRIPTION',
     MANUAL: 'MANUAL',
-    SPEND: 'SPEND'
-    AFFILIATE: 'AFFILIATE', // ✅ ADD THIS
-    AFFILIATE_MATURED: 'AFFILIATE_MATURED' // ✅ ADD THIS
+    SPEND: 'SPEND',
+    AFFILIATE: 'AFFILIATE',
+    AFFILIATE_MATURED: 'AFFILIATE_MATURED'
   },
 
   WALLET_STATUS: {
@@ -18,4 +18,3 @@ module.exports = {
     FROZEN: 'frozen'
   }
 };
-
