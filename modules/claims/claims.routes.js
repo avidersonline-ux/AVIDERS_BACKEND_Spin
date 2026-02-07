@@ -6,14 +6,15 @@ const { verifyToken, requireAdmin } = require('../../middleware/auth');
 const catchAsync = require('../../utils/catchAsync');
 
 // User Routes
-// POST /api/claims/upload
-router.post('/upload', verifyToken, upload.single('screenshot'), catchAsync((req, res, next) => claimsController.uploadClaim(req, res, next)));
+// POST /api/claims/submit - Flutter app sends claim with screenshot
+router.post('/submit', verifyToken, upload.single('screenshot'), catchAsync((req, res, next) => claimsController.submitClaim(req, res, next)));
 
-// GET /api/claims/user/:uid
-router.get('/user/:uid', verifyToken, catchAsync((req, res, next) => claimsController.getMyClaims(req, res, next)));
+// GET /api/claims/my-claims/:uid
+router.get('/my-claims/:uid', verifyToken, catchAsync((req, res, next) => claimsController.getMyClaims(req, res, next)));
 
 // Admin Routes
-router.post('/approve', verifyToken, requireAdmin, catchAsync((req, res, next) => claimsController.approve(req, res, next)));
-router.post('/reject', verifyToken, requireAdmin, catchAsync((req, res, next) => claimsController.reject(req, res, next)));
+router.get('/pending', requireAdmin, catchAsync((req, res, next) => claimsController.getPendingClaims(req, res, next)));
+router.post('/approve/:id', requireAdmin, catchAsync((req, res, next) => claimsController.approve(req, res, next)));
+router.post('/reject/:id', requireAdmin, catchAsync((req, res, next) => claimsController.reject(req, res, next)));
 
 module.exports = router;
