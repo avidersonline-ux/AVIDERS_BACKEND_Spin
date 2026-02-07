@@ -85,7 +85,7 @@ class AffiliateController {
     sendSuccess(res, claim, 'Claim approved and coins locked');
   }
 
-  // ✅ ADD THIS REJECT METHOD
+  // ✅ ✅ ✅ YOU MUST ADD THIS METHOD! ✅ ✅ ✅
   async reject(req, res, next) {
     const { claimId } = req.params;
     const { adminNote } = req.body;
