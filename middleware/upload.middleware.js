@@ -1,7 +1,6 @@
 const multer = require("multer");
 const path = require("path");
 
-// Use memory storage for R2 upload
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
