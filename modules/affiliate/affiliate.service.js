@@ -15,6 +15,18 @@ class AffiliateService {
     // ✅ Calculate Reward: 5% of order amount
     const rewardCoins = Math.floor(data.orderAmount * 0.05);
 
+    // Add this to affiliate.service.js
+async rejectClaim(claimId, adminNote) {
+  const claim = await AffiliateClaim.findById(claimId);
+  if (!claim || claim.status !== 'pending') {
+    throw new AppError('Invalid claim or already processed', 400);
+  }
+  
+  claim.status = 'rejected';
+  claim.adminNote = adminNote;
+  return await claim.save();
+}
+
     // Determine Maturity Days
     let maturityDays = 60; // Default External
     if (data.affiliateNetwork.toLowerCase().includes('subscription')) maturityDays = 30;
@@ -185,3 +197,4 @@ class AffiliateService {
 }
 
 module.exports = new AffiliateService();
+
