@@ -2,7 +2,7 @@ const affiliateService = require('./affiliate.service');
 const { validateClaim } = require('./affiliate.validation');
 const { sendSuccess } = require('../../utils/responseHandler');
 const { AppError } = require('../../utils/errorHandler');
-const walletService = require('../wallet/wallet.service'); // ADD THIS
+const walletService = require('../wallet/wallet.service');
 const AffiliateClaim = require('../../models/AffiliateClaim');
 const Wallet = require('../../models/Wallet');
 
@@ -83,6 +83,14 @@ class AffiliateController {
     const { adminNote } = req.body;
     const claim = await affiliateService.approveClaim(claimId, adminNote);
     sendSuccess(res, claim, 'Claim approved and coins locked');
+  }
+
+  // ✅ ADD THIS REJECT METHOD
+  async reject(req, res, next) {
+    const { claimId } = req.params;
+    const { adminNote } = req.body;
+    const claim = await affiliateService.rejectClaim(claimId, adminNote);
+    sendSuccess(res, claim, 'Claim rejected');
   }
 
   async getPending(req, res, next) {
