@@ -812,7 +812,6 @@ const cashbackRoutes = require("./modules/cashback/cashback.routes");
 const subscriptionRoutes = require("./modules/subscription/subscription.routes");
 const scanpayRoutes = require("./modules/scanpay/scanpay.routes");
 const affiliateRoutes = require("./modules/affiliate/affiliate.routes");
-const claimsRoutes = require("./modules/claims/claims.routes");
 console.log("ClaimsRoutes typeof:", typeof claimsRoutes);
 
 app.use("/api/wallet", walletRoutes);
