@@ -179,7 +179,8 @@ app.use("/api/", apiLimiter);
 
 let rewardsConfig = [];
 try {
-  const configPath = path.join(__dirname, "modules", "spinwheel-service", "config", "rewards.config.json");
+  // FIXED PATH: config/rewards.config.json
+  const configPath = path.join(__dirname, "config", "rewards.config.json");
   if (fs.existsSync(configPath)) {
     const configData = fs.readFileSync(configPath, "utf8");
     rewardsConfig = JSON.parse(configData).rewards;
@@ -244,36 +245,10 @@ if (!MONGODB_URI) {
 }
 
 // =====================
-// DATABASE SCHEMAS
+// DATABASE MODELS
 // =====================
 
-const userSchema = new mongoose.Schema(
-  {
-    uid: { type: String, required: true, unique: true },
-    email: { type: String, default: "" },
-    fcm_tokens: { type: [String], default: [] },
-
-    freeSpins: { type: Number, default: 1 },
-    bonusSpins: { type: Number, default: 0 },
-
-    walletCoins: { type: Number, default: 100 },
-    lastSpin: { type: Date, default: null },
-
-    // Stats
-    totalSpinsCount: { type: Number, default: 0 },
-    dailyFreeSpinsCount: { type: Number, default: 0 },
-    adBonusSpinsCount: { type: Number, default: 0 },
-    wonBonusSpinsCount: { type: Number, default: 0 },
-
-    // Referral
-    referralCode: { type: String, unique: true },
-    referredBy: { type: String, default: null },
-    referralRewarded: { type: Boolean, default: false },
-    referralCount: { type: Number, default: 0 },
-    referralEarnings: { type: Number, default: 0 },
-  },
-  { timestamps: true }
-);
+const User = require("./models/User");
 
 const spinHistorySchema = new mongoose.Schema(
   {
@@ -303,7 +278,6 @@ const spinHistorySchema = new mongoose.Schema(
 // Indexes defined within the schema (uid, referralCode) or separately
 spinHistorySchema.index({ uid: 1, timestamp: -1 });
 
-const User = mongoose.model("User", userSchema);
 const SpinHistory = mongoose.model("SpinHistory", spinHistorySchema);
 
 // =====================
@@ -403,7 +377,7 @@ app.get("/health", async (req, res) => {
   try {
     const userCount = await User.countDocuments().catch(() => 0);
     const spinCount = await SpinHistory.countDocuments().catch(() => 0);
-    
+
     // Get total coins in the system
     const totalCoins = await User.aggregate([
       { $group: { _id: null, total: { $sum: "$walletCoins" } } }
@@ -706,7 +680,7 @@ app.get("/api/spin/admin/users", requireAdminKey, async (req, res) => {
   try {
     const users = await User.find().sort({ createdAt: -1 }).limit(300).lean();
     const totalSpins = await SpinHistory.countDocuments();
-    
+
     const totalCoins = users.reduce((sum, user) => sum + (user.walletCoins || 0), 0);
 
     res.json({
