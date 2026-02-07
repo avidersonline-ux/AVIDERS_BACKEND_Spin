@@ -5,13 +5,18 @@ const upload = require("../../middleware/upload.middleware");
 const { verifyToken, requireAdmin } = require("../../middleware/auth");
 const catchAsync = require("../../utils/catchAsync");
 
-// Test Endpoint
+/**
+ * @route   GET /api/claims/test
+ * @desc    Test if claims module is mounted correctly
+ */
 router.get("/test", (req, res) => {
-  res.json({ success: true, module: "claims working" });
+  res.json({ success: true, message: "Claims module is active" });
 });
 
-// User Routes
-// POST /api/claims/submit - Flutter app sends claim with screenshot
+/**
+ * @route   POST /api/claims/submit
+ * @desc    Submit a new shopping claim with screenshot
+ */
 router.post(
   "/submit",
   verifyToken,
@@ -19,19 +24,44 @@ router.post(
   catchAsync((req, res, next) => claimsController.submitClaim(req, res, next))
 );
 
-// GET /api/claims/user/:userId - Get claims for a specific user
+/**
+ * @route   GET /api/claims/my-claims/:uid
+ * @desc    Get all claims for a specific user
+ */
 router.get(
-  "/user/:userId",
+  "/my-claims/:uid",
   verifyToken,
-  catchAsync((req, res, next) => claimsController.getUserClaims(req, res, next))
+  catchAsync((req, res, next) => claimsController.getMyClaims(req, res, next))
 );
 
-// Admin Routes
-// GET /api/claims/admin/pending - Get all pending claims
+/**
+ * @route   GET /api/claims/admin/pending
+ * @desc    Admin: Get all pending claims
+ */
 router.get(
   "/admin/pending",
   requireAdmin,
   catchAsync((req, res, next) => claimsController.getPendingClaims(req, res, next))
+);
+
+/**
+ * @route   POST /api/claims/admin/approve/:id
+ * @desc    Admin: Approve a claim and credit coins
+ */
+router.post(
+  "/admin/approve/:id",
+  requireAdmin,
+  catchAsync((req, res, next) => claimsController.approve(req, res, next))
+);
+
+/**
+ * @route   POST /api/claims/admin/reject/:id
+ * @desc    Admin: Reject a claim
+ */
+router.post(
+  "/admin/reject/:id",
+  requireAdmin,
+  catchAsync((req, res, next) => claimsController.reject(req, res, next))
 );
 
 module.exports = router;
