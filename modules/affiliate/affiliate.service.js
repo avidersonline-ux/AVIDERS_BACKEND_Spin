@@ -1,6 +1,6 @@
 const AffiliateClaim = require('../../models/AffiliateClaim');
 const Wallet = require('../../models/Wallet');
-const Transaction = require('../../models/Transaction'); // Import here
+const Transaction = require('../../models/Transaction');
 const { AppError } = require('../../utils/errorHandler');
 const mongoose = require('mongoose');
 
@@ -14,18 +14,6 @@ class AffiliateService {
 
     // ✅ Calculate Reward: 5% of order amount
     const rewardCoins = Math.floor(data.orderAmount * 0.05);
-
-    // Add this to affiliate.service.js
-async rejectClaim(claimId, adminNote) {
-  const claim = await AffiliateClaim.findById(claimId);
-  if (!claim || claim.status !== 'pending') {
-    throw new AppError('Invalid claim or already processed', 400);
-  }
-  
-  claim.status = 'rejected';
-  claim.adminNote = adminNote;
-  return await claim.save();
-}
 
     // Determine Maturity Days
     let maturityDays = 60; // Default External
@@ -96,6 +84,20 @@ async rejectClaim(claimId, adminNote) {
     } finally {
       session.endSession();
     }
+  }
+
+  /**
+   * ✅ Reject a claim (CORRECT PLACEMENT - SEPARATE METHOD)
+   */
+  async rejectClaim(claimId, adminNote) {
+    const claim = await AffiliateClaim.findById(claimId);
+    if (!claim || claim.status !== 'pending') {
+      throw new AppError('Invalid claim or already processed', 400);
+    }
+    
+    claim.status = 'rejected';
+    claim.adminNote = adminNote;
+    return await claim.save();
   }
 
   /**
@@ -187,7 +189,6 @@ async rejectClaim(claimId, adminNote) {
       } catch (err) {
         await session.abortTransaction();
         console.error(`Maturity failed for ${claim._id}:`, err.message);
-        // Optionally, you could add retry logic or alert here
       } finally {
         session.endSession();
       }
@@ -197,4 +198,3 @@ async rejectClaim(claimId, adminNote) {
 }
 
 module.exports = new AffiliateService();
-
