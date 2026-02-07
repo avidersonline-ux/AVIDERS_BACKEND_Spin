@@ -6,11 +6,9 @@ const claimSchema = Joi.object({
   productName: Joi.string().min(2).max(100).required(),
   orderAmount: Joi.number().positive().required(),
   affiliateNetwork: Joi.string().required(),
-  screenshotUrl: Joi.string().uri().required(),
-  maturityDays: Joi.number().integer().min(1).max(365) // Optional override
+  screenshotUrl: Joi.string().uri().optional() // Change from required to optional
 });
 
 module.exports = {
   validateClaim: (data) => claimSchema.validate(data)
 };
-
