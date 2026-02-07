@@ -3,6 +3,7 @@ const Wallet = require('../../models/Wallet');
 const Transaction = require('../../models/Transaction');
 const { AppError } = require('../../utils/errorHandler');
 const mongoose = require('mongoose');
+const { moveFileInR2 } = require('../../config/r2'); // ✅ Add this import
 
 class AffiliateService {
   /**
@@ -48,9 +49,21 @@ class AffiliateService {
         throw new AppError('Invalid claim or already processed', 400);
       }
 
+      // ✅ MOVE FILE: From pending to approved folder
+      let newScreenshotUrl = claim.screenshotUrl;
+      if (claim.screenshotUrl.includes('pending')) {
+        const destinationKey = claim.screenshotUrl.replace('pending', 'approved');
+        newScreenshotUrl = await moveFileInR2(
+          this.extractKeyFromUrl(claim.screenshotUrl),
+          this.extractKeyFromUrl(destinationKey)
+        );
+      }
+
+      // Update claim
       claim.status = 'approved';
       claim.approvedAt = new Date();
       claim.adminNote = adminNote;
+      claim.screenshotUrl = newScreenshotUrl;
       await claim.save({ session });
 
       // Lock coins in wallet
@@ -60,13 +73,13 @@ class AffiliateService {
         { upsert: true, new: true, session }
       );
 
-      // ✅ Log transaction with correct balance
+      // Log transaction
       await Transaction.create([{
         userId: claim.userId,
         type: 'CREDIT',
-        source: 'AFFILIATE', // ✅ Use proper source
+        source: 'AFFILIATE',
         amount: claim.rewardCoins,
-        balanceAfter: wallet.unlockedBalance, // ✅ Actual unlocked balance
+        balanceAfter: wallet.unlockedBalance,
         referenceId: `aff_appr_${claim._id}`,
         metadata: { 
           claimId: claim._id, 
@@ -87,7 +100,7 @@ class AffiliateService {
   }
 
   /**
-   * ✅ Reject a claim (CORRECT PLACEMENT - SEPARATE METHOD)
+   * ✅ Reject a claim with file moving
    */
   async rejectClaim(claimId, adminNote) {
     const claim = await AffiliateClaim.findById(claimId);
@@ -95,8 +108,19 @@ class AffiliateService {
       throw new AppError('Invalid claim or already processed', 400);
     }
     
+    // ✅ MOVE FILE: From pending to rejected folder
+    let newScreenshotUrl = claim.screenshotUrl;
+    if (claim.screenshotUrl.includes('pending')) {
+      const destinationKey = claim.screenshotUrl.replace('pending', 'rejected');
+      newScreenshotUrl = await moveFileInR2(
+        this.extractKeyFromUrl(claim.screenshotUrl),
+        this.extractKeyFromUrl(destinationKey)
+      );
+    }
+    
     claim.status = 'rejected';
     claim.adminNote = adminNote;
+    claim.screenshotUrl = newScreenshotUrl;
     return await claim.save();
   }
 
@@ -116,7 +140,6 @@ class AffiliateService {
       },
       {
         $addFields: {
-          // Calculate maturity date in query
           maturityDate: {
             $dateAdd: {
               startDate: '$approvedAt',
@@ -169,7 +192,7 @@ class AffiliateService {
           { session }
         );
 
-        // ✅ Log maturity transaction
+        // Log maturity transaction
         await Transaction.create([{
           userId: claim.userId,
           type: 'CREDIT',
@@ -194,6 +217,20 @@ class AffiliateService {
       }
     }
     return processedCount;
+  }
+
+  /**
+   * ✅ HELPER: Extract key from R2 URL
+   */
+  extractKeyFromUrl(url) {
+    // URL format: https://account.r2.cloudflarestorage.com/bucket/key
+    const parts = url.split('/');
+    const bucketIndex = parts.indexOf(process.env.R2_BUCKET_NAME || "aviders-claims");
+    if (bucketIndex !== -1) {
+      return parts.slice(bucketIndex + 1).join('/');
+    }
+    // If it's already just the key, return as is
+    return url;
   }
 }
 
