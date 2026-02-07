@@ -186,7 +186,7 @@ try {
     rewardsConfig = JSON.parse(configData).rewards;
     console.log(`✅ Rewards loaded from config file: ${rewardsConfig.length}`);
   } else {
-    throw new Error("Rewards config missing");
+    throw new Error("Rewards config missing at " + configPath);
   }
 } catch (error) {
   console.error("❌ Rewards config load failed, using fallback:", error.message);
