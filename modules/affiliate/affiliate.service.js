@@ -29,7 +29,7 @@ class AffiliateService {
       rewardCoins,
       affiliateNetwork: data.affiliateNetwork,
       screenshotUrl: data.screenshotUrl || '',
-      orderDate: data.orderDate, // ✅ Fixed: Now saving orderDate
+      orderDate: data.orderDate,
       maturityDays,
       status: 'pending'
     });
@@ -50,14 +50,20 @@ class AffiliateService {
         throw new AppError('Invalid claim or already processed', 400);
       }
 
-      // ✅ MOVE FILE: From pending to approved folder
+      // ✅ SAFE MOVE FILE: Don't crash if file move fails
       let newScreenshotUrl = claim.screenshotUrl;
       if (claim.screenshotUrl && claim.screenshotUrl.includes('pending')) {
-        const destinationKey = claim.screenshotUrl.replace('pending', 'approved');
-        newScreenshotUrl = await moveFileInR2(
-          this.extractKeyFromUrl(claim.screenshotUrl),
-          this.extractKeyFromUrl(destinationKey)
-        );
+        try {
+          const destinationKey = claim.screenshotUrl.replace('pending', 'approved');
+          newScreenshotUrl = await moveFileInR2(
+            this.extractKeyFromUrl(claim.screenshotUrl),
+            this.extractKeyFromUrl(destinationKey)
+          );
+        } catch (fileError) {
+          console.warn(`⚠️ Warning: Could not move file for claim ${claimId}:`, fileError.message);
+          // If the error is just that the file wasn't found, we can keep the old URL
+          // or just proceed. The approval shouldn't be blocked by storage issues.
+        }
       }
 
       // Update claim
@@ -80,7 +86,7 @@ class AffiliateService {
         type: 'CREDIT',
         source: 'AFFILIATE',
         amount: claim.rewardCoins,
-        balanceAfter: wallet.unlockedBalance,
+        balanceAfter: (wallet.unlockedBalance || 0),
         referenceId: `aff_appr_${claim._id}`,
         metadata: { 
           claimId: claim._id, 
@@ -101,7 +107,7 @@ class AffiliateService {
   }
 
   /**
-   * Reject a claim
+   * ✅ Reject a claim safely
    */
   async rejectClaim(claimId, adminNote) {
     const claim = await AffiliateClaim.findById(claimId);
@@ -109,14 +115,18 @@ class AffiliateService {
       throw new AppError('Invalid claim or already processed', 400);
     }
     
-    // ✅ MOVE FILE: From pending to rejected folder
+    // ✅ SAFE MOVE FILE: Don't crash if file move fails
     let newScreenshotUrl = claim.screenshotUrl;
     if (claim.screenshotUrl && claim.screenshotUrl.includes('pending')) {
-      const destinationKey = claim.screenshotUrl.replace('pending', 'rejected');
-      newScreenshotUrl = await moveFileInR2(
-        this.extractKeyFromUrl(claim.screenshotUrl),
-        this.extractKeyFromUrl(destinationKey)
-      );
+      try {
+        const destinationKey = claim.screenshotUrl.replace('pending', 'rejected');
+        newScreenshotUrl = await moveFileInR2(
+          this.extractKeyFromUrl(claim.screenshotUrl),
+          this.extractKeyFromUrl(destinationKey)
+        );
+      } catch (fileError) {
+        console.warn(`⚠️ Warning: Could not move file for rejection ${claimId}:`, fileError.message);
+      }
     }
     
     claim.status = 'rejected';
