@@ -1,4 +1,4 @@
-const firebaseConfig = require('../config/firebase'); // ✅ Import the whole object
+const firebaseConfig = require('../config/firebase');
 const { AppError } = require('../utils/errorHandler');
 
 /**
@@ -13,7 +13,6 @@ const verifyToken = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    // ✅ Check property on the config object to get latest state
     if (!firebaseConfig.isInitialized) {
       if (process.env.NODE_ENV !== 'production') {
         req.user = { uid: req.body.uid || 'dev_user' };
@@ -32,18 +31,24 @@ const verifyToken = async (req, res, next) => {
 };
 
 /**
- * Simple Admin Key check
+ * Admin Key check - Supports both old and new secret names
  */
 const requireAdmin = (req, res, next) => {
   const adminKey = req.headers['x-admin-key'];
 
-  // ✅ Logs for your Render dashboard to help you debug
-  if (!adminKey) console.log('⚠️ Admin Request: No x-admin-key header');
+  // ✅ Check for your new variable ADMIN_SECRET_1 first, then fallback
+  const expectedSecret = process.env.ADMIN_SECRET_1 || process.env.ADMIN_SECRET;
 
-  if (!adminKey || adminKey !== process.env.ADMIN_SECRET) {
-    console.log(`🚫 Admin Access Denied: Provided key does not match ADMIN_SECRET`);
+  if (!adminKey) {
+    console.log('⚠️ Admin Access Denied: No x-admin-key header provided');
     return next(new AppError('Admin access denied', 403));
   }
+
+  if (adminKey !== expectedSecret) {
+    console.log(`🚫 Admin Access Denied: Incorrect key provided. Expected matching value of ADMIN_SECRET_1`);
+    return next(new AppError('Admin access denied', 403));
+  }
+
   next();
 };
 
