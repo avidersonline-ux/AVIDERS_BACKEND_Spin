@@ -10,11 +10,21 @@ const transactionSchema = new mongoose.Schema({
   source: {
     type: String,
     required: true,
-    enum: ['SPIN', 'REFERRAL', 'CASHBACK', 'SUBSCRIPTION', 'MANUAL', 'SPEND']
+    // ✅ Added AFFILIATE and AFFILIATE_MATURED to support shopping rewards
+    enum: [
+      'SPIN',
+      'REFERRAL',
+      'CASHBACK',
+      'SUBSCRIPTION',
+      'MANUAL',
+      'SPEND',
+      'AFFILIATE',
+      'AFFILIATE_MATURED'
+    ]
   },
   amount: { type: Number, required: true },
   balanceAfter: { type: Number, required: true },
-  referenceId: { type: String, required: true, unique: true }, // Idempotency key (e.g., spinHistoryId, orderId)
+  referenceId: { type: String, required: true, unique: true },
   metadata: { type: Object, default: {} },
   description: { type: String },
   status: {
