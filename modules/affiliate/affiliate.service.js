@@ -15,19 +15,19 @@ class AffiliateService {
     const existing = await AffiliateClaim.findOne({ orderId: data.orderId });
     if (existing) throw new AppError('Order ID already submitted', 400);
 
-    // ✅ Calculate Reward Logic
+    // Calculate Reward Logic
     let rewardCoins;
     if (data.affiliateNetwork === 'Bill Pay') {
-      rewardCoins = 150; // Flat 150 AVD for Recharges/Bill Pay
+      rewardCoins = 150;
     } else {
-      rewardCoins = Math.floor(data.orderAmount); // 100% for Amazon, Flipkart, AVIDERS, etc.
+      rewardCoins = Math.floor(data.orderAmount);
     }
 
     // Determine Maturity Days
     let maturityDays = 60;
     if (data.affiliateNetwork.toLowerCase().includes('subscription')) maturityDays = 30;
     if (data.affiliateNetwork.toLowerCase().includes('partner')) maturityDays = 6;
-    if (data.affiliateNetwork === 'Bill Pay') maturityDays = 3; // Fast maturity for Bill Pay?
+    if (data.affiliateNetwork === 'Bill Pay') maturityDays = 3;
 
     const claim = await AffiliateClaim.create({
       userId: data.uid,
@@ -47,6 +47,7 @@ class AffiliateService {
 
   /**
    * Admin Approval Logic
+   * ✅ FIXED: Now updates User.walletCoins IMMEDIATELY so it shows in main balance
    */
   async approveClaim(claimId, adminNote) {
     const session = await mongoose.startSession();
@@ -58,7 +59,7 @@ class AffiliateService {
         throw new AppError('Invalid claim or already processed', 400);
       }
 
-      // ✅ SAFE MOVE FILE: Don't crash if file move fails
+      // Safe move file
       let newScreenshotUrl = claim.screenshotUrl;
       if (claim.screenshotUrl && claim.screenshotUrl.includes('pending')) {
         try {
@@ -86,13 +87,20 @@ class AffiliateService {
         { upsert: true, new: true, session }
       );
 
+      // ✅ SYNC TO USER MODEL: Update main balance immediately
+      await mongoose.model('User').findOneAndUpdate(
+        { uid: claim.userId },
+        { $inc: { walletCoins: claim.rewardCoins } },
+        { session }
+      );
+
       // Log transaction
       await Transaction.create([{
         userId: claim.userId,
         type: 'CREDIT',
         source: 'AFFILIATE',
         amount: claim.rewardCoins,
-        balanceAfter: wallet.unlockedBalance,
+        balanceAfter: (wallet.unlockedBalance || 0),
         referenceId: `aff_appr_${claim._id}`,
         metadata: { 
           claimId: claim._id, 
@@ -142,6 +150,7 @@ class AffiliateService {
 
   /**
    * Maturity Engine
+   * ✅ FIXED: Removed User.walletCoins update here because it's now done during approval
    */
   async processMaturity() {
     const now = new Date();
@@ -184,7 +193,8 @@ class AffiliateService {
           { session }
         );
 
-        const wallet = await Wallet.findOneAndUpdate(
+        // Transfer from locked to unlockedBalance in Wallet
+        await Wallet.findOneAndUpdate(
           { userId: claim.userId },
           {
             $inc: {
@@ -195,18 +205,14 @@ class AffiliateService {
           { new: true, session }
         );
 
-        await mongoose.model('User').updateOne(
-          { uid: claim.userId },
-          { $inc: { walletCoins: claim.rewardCoins } },
-          { session }
-        );
+        // Note: We NO LONGER update User.walletCoins here because it was updated in approveClaim
 
         await Transaction.create([{
           userId: claim.userId,
           type: 'CREDIT',
           source: 'AFFILIATE_MATURED',
           amount: claim.rewardCoins,
-          balanceAfter: wallet.unlockedBalance,
+          balanceAfter: 0, // Will be calculated correctly by client summary
           referenceId: `aff_matured_${claim._id}`,
           metadata: { 
             claimId: claim._id, 
