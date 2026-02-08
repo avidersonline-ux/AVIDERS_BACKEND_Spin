@@ -3,12 +3,17 @@ const router = express.Router();
 const controller = require('./affiliate.controller');
 const catchAsync = require('../../utils/catchAsync');
 const { requireAdmin, verifyToken } = require('../../middleware/auth');
-const upload = require('../../middleware/upload.middleware'); // Add this
+const upload = require('../../middleware/upload.middleware');
 
 // User Routes (protected by verifyToken)
-router.post('/claim', 
+router.post('/upload',
   verifyToken,
-  upload.single('screenshot'), // Add this middleware for file upload
+  upload.single('screenshot'),
+  catchAsync((req, res, next) => controller.uploadScreenshot(req, res, next))
+);
+
+router.post('/claim',
+  verifyToken,
   catchAsync((req, res, next) => controller.submitClaim(req, res, next))
 );
 
