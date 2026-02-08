@@ -7,7 +7,7 @@ const affiliateClaimSchema = new mongoose.Schema({
   orderAmount: { type: Number, required: true },
   rewardCoins: { type: Number, required: true },
   affiliateNetwork: { type: String, required: true },
-  screenshotUrl: { type: String, required: true },
+  screenshotUrl: { type: String, required: false, default: '' }, // ✅ Made optional
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected', 'matured'],
