@@ -19,50 +19,10 @@ const helmet = require("helmet");
 const Joi = require("joi");
 
 // =====================
-// FIREBASE ADMIN SDK
+// FIREBASE ADMIN SDK (Unified)
 // =====================
-
-let admin;
-let firebaseInitialized = false;
-
-try {
-  admin = require("firebase-admin");
-
-  if (!admin.apps.length) {
-    // Priority 1: Env JSON for Render
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-      try {
-        const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-        admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount),
-        });
-        firebaseInitialized = true;
-        console.log("✅ Firebase Admin initialized from environment variable");
-      } catch (parseError) {
-        console.error("❌ Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON:", parseError.message);
-      }
-    } else {
-      // Priority 2: Local file for development
-      const serviceAccountPath = path.join(__dirname, "middleware", "serviceAccount.json");
-      if (fs.existsSync(serviceAccountPath)) {
-        const serviceAccount = require(serviceAccountPath);
-        admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount),
-        });
-        firebaseInitialized = true;
-        console.log("✅ Firebase Admin initialized from file");
-      } else {
-        console.log("⚠️ Firebase Admin: No credentials found (FCM disabled)");
-        admin = null;
-      }
-    }
-  } else {
-    firebaseInitialized = true;
-  }
-} catch (error) {
-  console.log("⚠️ Firebase Admin SDK not available:", error.message);
-  admin = null;
-}
+const { admin, initializeFirebase, isInitialized } = require("./config/firebase");
+initializeFirebase();
 
 const app = express();
 app.set("trust proxy", 1);
@@ -755,7 +715,7 @@ app.post("/api/spin/admin/reset-daily", requireInternalKey, async (req, res) => 
 // Internal: FCM notify
 app.post("/api/spin/admin/run-notify", requireInternalKey, async (req, res) => {
   try {
-    if (!admin || !firebaseInitialized) {
+    if (!admin || !isInitialized) {
       return res.status(503).json({
         success: false,
         message: "FCM not configured",
@@ -901,7 +861,7 @@ const server = app.listen(PORT, () => {
   console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🎯 Rewards loaded: ${rewardsConfig.length}`);
   console.log(`🛡️ Helmet + RateLimit + Compression enabled`);
-  console.log(`📱 Firebase Admin: ${firebaseInitialized ? "✅ Initialized" : "❌ Disabled"}`);
+  console.log(`📱 Firebase Admin: ${isInitialized ? "✅ Initialized" : "❌ Disabled"}`);
 
   const dbStatus = mongoose.connection.readyState === 1 ? "✅ Connected" : "❌ Disconnected";
   console.log(`💾 MongoDB: ${dbStatus}`);
