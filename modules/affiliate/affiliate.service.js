@@ -7,19 +7,27 @@ const { moveFileInR2 } = require('../../config/r2');
 
 class AffiliateService {
   /**
-   * Submit a new claim - 100% AVD reward
+   * Submit a new claim
+   * - Others: 100% AVD reward
+   * - Bill Pay: 150 AVD flat reward
    */
   async submitClaim(data) {
     const existing = await AffiliateClaim.findOne({ orderId: data.orderId });
     if (existing) throw new AppError('Order ID already submitted', 400);
 
-    // ✅ Calculate Reward: 100% of order amount
-    const rewardCoins = Math.floor(data.orderAmount);
+    // ✅ Calculate Reward Logic
+    let rewardCoins;
+    if (data.affiliateNetwork === 'Bill Pay') {
+      rewardCoins = 150; // Flat 150 AVD for Recharges/Bill Pay
+    } else {
+      rewardCoins = Math.floor(data.orderAmount); // 100% for Amazon, Flipkart, AVIDERS, etc.
+    }
 
     // Determine Maturity Days
     let maturityDays = 60;
     if (data.affiliateNetwork.toLowerCase().includes('subscription')) maturityDays = 30;
     if (data.affiliateNetwork.toLowerCase().includes('partner')) maturityDays = 6;
+    if (data.affiliateNetwork === 'Bill Pay') maturityDays = 3; // Fast maturity for Bill Pay?
 
     const claim = await AffiliateClaim.create({
       userId: data.uid,
@@ -29,7 +37,7 @@ class AffiliateService {
       rewardCoins,
       affiliateNetwork: data.affiliateNetwork,
       screenshotUrl: data.screenshotUrl || '',
-      orderDate: data.orderDate, // ✅ Fixed: Now saving orderDate
+      orderDate: data.orderDate,
       maturityDays,
       status: 'pending'
     });
@@ -50,14 +58,18 @@ class AffiliateService {
         throw new AppError('Invalid claim or already processed', 400);
       }
 
-      // ✅ MOVE FILE: From pending to approved folder
+      // ✅ SAFE MOVE FILE: Don't crash if file move fails
       let newScreenshotUrl = claim.screenshotUrl;
       if (claim.screenshotUrl && claim.screenshotUrl.includes('pending')) {
-        const destinationKey = claim.screenshotUrl.replace('pending', 'approved');
-        newScreenshotUrl = await moveFileInR2(
-          this.extractKeyFromUrl(claim.screenshotUrl),
-          this.extractKeyFromUrl(destinationKey)
-        );
+        try {
+          const destinationKey = claim.screenshotUrl.replace('pending', 'approved');
+          newScreenshotUrl = await moveFileInR2(
+            this.extractKeyFromUrl(claim.screenshotUrl),
+            this.extractKeyFromUrl(destinationKey)
+          );
+        } catch (fileError) {
+          console.warn(`⚠️ Warning: Could not move file for claim ${claimId}:`, fileError.message);
+        }
       }
 
       // Update claim
@@ -109,14 +121,17 @@ class AffiliateService {
       throw new AppError('Invalid claim or already processed', 400);
     }
     
-    // ✅ MOVE FILE: From pending to rejected folder
     let newScreenshotUrl = claim.screenshotUrl;
     if (claim.screenshotUrl && claim.screenshotUrl.includes('pending')) {
-      const destinationKey = claim.screenshotUrl.replace('pending', 'rejected');
-      newScreenshotUrl = await moveFileInR2(
-        this.extractKeyFromUrl(claim.screenshotUrl),
-        this.extractKeyFromUrl(destinationKey)
-      );
+      try {
+        const destinationKey = claim.screenshotUrl.replace('pending', 'rejected');
+        newScreenshotUrl = await moveFileInR2(
+          this.extractKeyFromUrl(claim.screenshotUrl),
+          this.extractKeyFromUrl(destinationKey)
+        );
+      } catch (fileError) {
+        console.warn(`⚠️ Warning: Could not move file for rejection ${claimId}:`, fileError.message);
+      }
     }
     
     claim.status = 'rejected';
