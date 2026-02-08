@@ -3,18 +3,19 @@ const Wallet = require('../../models/Wallet');
 const Transaction = require('../../models/Transaction');
 const { AppError } = require('../../utils/errorHandler');
 const mongoose = require('mongoose');
-const { moveFileInR2 } = require('../../config/r2'); // ✅ Add this import
+const { moveFileInR2 } = require('../../config/r2');
 
 class AffiliateService {
   /**
-   * Submit a new claim - 5% reward for affiliate purchases
+   * Submit a new claim - 100% AVD reward (up to a certain cap if needed, currently uncapped 1:1)
    */
   async submitClaim(data) {
     const existing = await AffiliateClaim.findOne({ orderId: data.orderId });
     if (existing) throw new AppError('Order ID already submitted', 400);
 
-    // ✅ Calculate Reward: 5% of order amount
-    const rewardCoins = Math.floor(data.orderAmount * 0.05);
+    // ✅ UPDATED: Calculate Reward: 100% of order amount (1:1 ratio)
+    // If you want a specific cap, e.g., max 500 coins, use: Math.min(data.orderAmount, 500)
+    const rewardCoins = Math.floor(data.orderAmount);
 
     // Determine Maturity Days
     let maturityDays = 60; // Default External
@@ -28,7 +29,7 @@ class AffiliateService {
       orderAmount: data.orderAmount,
       rewardCoins,
       affiliateNetwork: data.affiliateNetwork,
-      screenshotUrl: data.screenshotUrl,
+      screenshotUrl: data.screenshotUrl || '',
       maturityDays,
       status: 'pending'
     });
@@ -49,9 +50,9 @@ class AffiliateService {
         throw new AppError('Invalid claim or already processed', 400);
       }
 
-      // ✅ MOVE FILE: From pending to approved folder
+      // ✅ MOVE FILE: From pending to approved folder (if screenshot exists)
       let newScreenshotUrl = claim.screenshotUrl;
-      if (claim.screenshotUrl.includes('pending')) {
+      if (claim.screenshotUrl && claim.screenshotUrl.includes('pending')) {
         const destinationKey = claim.screenshotUrl.replace('pending', 'approved');
         newScreenshotUrl = await moveFileInR2(
           this.extractKeyFromUrl(claim.screenshotUrl),
@@ -108,9 +109,9 @@ class AffiliateService {
       throw new AppError('Invalid claim or already processed', 400);
     }
     
-    // ✅ MOVE FILE: From pending to rejected folder
+    // ✅ MOVE FILE: From pending to rejected folder (if screenshot exists)
     let newScreenshotUrl = claim.screenshotUrl;
-    if (claim.screenshotUrl.includes('pending')) {
+    if (claim.screenshotUrl && claim.screenshotUrl.includes('pending')) {
       const destinationKey = claim.screenshotUrl.replace('pending', 'rejected');
       newScreenshotUrl = await moveFileInR2(
         this.extractKeyFromUrl(claim.screenshotUrl),
@@ -130,7 +131,6 @@ class AffiliateService {
   async processMaturity() {
     const now = new Date();
     
-    // ✅ Find only claims ready for maturity (optimized query)
     const claimsToMature = await AffiliateClaim.aggregate([
       {
         $match: {
@@ -163,7 +163,6 @@ class AffiliateService {
       session.startTransaction();
       
       try {
-        // Update claim status
         await AffiliateClaim.findByIdAndUpdate(
           claim._id,
           {
@@ -173,7 +172,6 @@ class AffiliateService {
           { session }
         );
 
-        // Transfer from locked to unlockedBalance
         const wallet = await Wallet.findOneAndUpdate(
           { userId: claim.userId },
           {
@@ -185,14 +183,12 @@ class AffiliateService {
           { new: true, session }
         );
 
-        // Update User model
         await mongoose.model('User').updateOne(
           { uid: claim.userId },
           { $inc: { walletCoins: claim.rewardCoins } },
           { session }
         );
 
-        // Log maturity transaction
         await Transaction.create([{
           userId: claim.userId,
           type: 'CREDIT',
@@ -219,17 +215,14 @@ class AffiliateService {
     return processedCount;
   }
 
-  /**
-   * ✅ HELPER: Extract key from R2 URL
-   */
   extractKeyFromUrl(url) {
-    // URL format: https://account.r2.cloudflarestorage.com/bucket/key
+    if (!url) return '';
     const parts = url.split('/');
-    const bucketIndex = parts.indexOf(process.env.R2_BUCKET_NAME || "aviders-claims");
+    const bucketName = process.env.R2_BUCKET_NAME || "aviders-claims";
+    const bucketIndex = parts.indexOf(bucketName);
     if (bucketIndex !== -1) {
       return parts.slice(bucketIndex + 1).join('/');
     }
-    // If it's already just the key, return as is
     return url;
   }
 }
